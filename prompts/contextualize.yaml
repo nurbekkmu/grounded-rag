@@ -1,0 +1,22 @@
+# Anthropic's contextual retrieval prompt, verbatim from
+# "Introducing Contextual Retrieval" (Anthropic, 2024).
+# {{WHOLE_DOCUMENT}} is the chapter (our ingested document unit), not the
+# whole book. Document-first ordering is deliberate: the large chapter
+# prefix stays identical across all per-chunk calls, so prompt caching
+# can reuse it.
+version: 1
+name: contextualize_chunk
+model: gemini-2.5-flash
+temperature: 0.0
+max_output_tokens: 150
+template: |
+  <document>
+  {{WHOLE_DOCUMENT}}
+  </document>
+  Here is the chunk we want to situate within the whole document:
+  <chunk>
+  {{CHUNK_CONTENT}}
+  </chunk>
+  Please give a short succinct context to situate this chunk within the
+  overall document for the purposes of improving search retrieval of the
+  chunk. Answer only with the succinct context and nothing else.
