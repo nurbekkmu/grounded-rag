@@ -1,0 +1,12 @@
+# secrets
+.env
+
+# data: corpus is copyrighted (book) / fetched live (blog) - never committed
+data/
+
+# environments & tooling
+.venv/
+venv/
+.idea/
+__pycache__/
+*.pyc
