@@ -14,15 +14,16 @@ Every generated context is cached in data/cache/contexts.jsonl keyed on
 sha256(doc_text, chunk_text, prompt_version, model) - re-runs only pay for
 new or changed chunks; chunking changes invalidate the key automatically.
 
-Usage:  python contextualize.py <chunks.jsonl> <out.jsonl> [limit]
+Usage:  python contextualize.py <chunks.jsonl> <out.jsonl>
+            [--limit N] [--prompt prompts/contextualize.yaml]
 Deps:   pip install google-genai python-dotenv pyyaml
 Env:    GEMINI_API_KEYS=key1,key2,...   (rotates on quota errors)
 """
 
+import argparse
 import hashlib
 import json
 import os
-import sys
 import time
 
 import yaml
@@ -155,12 +156,13 @@ def gen_context(rotator: KeyRotator, cfg: dict, doc_id: str, doc_text: str,
     raise RuntimeError(f"all attempts exhausted; last error: {last_err}")
 
 
-def main(chunks_path: str, out_path: str, limit: int = 0):
+def main(chunks_path: str, out_path: str, limit: int = 0,
+         prompt_path: str = PROMPT_FILE):
     load_dotenv()
     keys = [k.strip() for k in os.environ["GEMINI_API_KEYS"].split(",")
             if k.strip()]
     rotator = KeyRotator(keys)
-    cfg = load_prompt()
+    cfg = load_prompt(prompt_path)
 
     chunks = [json.loads(line) for line in open(chunks_path, encoding="utf-8")]
 
@@ -224,5 +226,10 @@ def main(chunks_path: str, out_path: str, limit: int = 0):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2],
-         int(sys.argv[3]) if len(sys.argv) > 3 else 0)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("chunks")
+    ap.add_argument("out")
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--prompt", default=PROMPT_FILE)
+    a = ap.parse_args()
+    main(a.chunks, a.out, a.limit, a.prompt)

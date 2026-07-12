@@ -1,0 +1,25 @@
+# Same Anthropic contextual-retrieval template as contextualize.yaml,
+# generated with gemini-2.5-flash-lite instead of gemini-2.5-flash.
+#
+# Why two configs (user decision, 2026-07-12): the free tier caps
+# gemini-2.5-flash at 20 requests/day/key, which would stall the blog's
+# 484 contexts for days. Book contexts stay on flash (higher quality,
+# already 96% done); blog contexts use flash-lite (far higher daily
+# allowance). Contexts are retrieval fuel, never shown as evidence, so
+# the quality delta carries low risk.
+version: 1
+name: contextualize_chunk_lite
+model: gemini-2.5-flash-lite
+temperature: 0.0
+max_output_tokens: 150
+template: |
+  <document>
+  {{WHOLE_DOCUMENT}}
+  </document>
+  Here is the chunk we want to situate within the whole document:
+  <chunk>
+  {{CHUNK_CONTENT}}
+  </chunk>
+  Please give a short succinct context to situate this chunk within the
+  overall document for the purposes of improving search retrieval of the
+  chunk. Answer only with the succinct context and nothing else.
