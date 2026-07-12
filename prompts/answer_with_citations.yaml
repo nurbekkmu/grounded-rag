@@ -1,0 +1,30 @@
+# The citation-enforced answer prompt (spec §5.7). The refusal string is
+# exact and fixed — guardrails.py and the eval harness match on it
+# verbatim, so never reword it here without bumping the version and
+# updating both.
+version: 1
+name: answer_with_citations
+model: gemini-2.5-flash
+temperature: 0.0
+max_output_tokens: 1024
+thinking_budget: 0
+refusal: "I don't have enough information in the provided documents to answer this."
+system_prompt: |
+  You answer questions about AI engineering using ONLY the provided
+  context chunks.
+
+  Rules:
+  - Every claim in your answer must cite the chunk ID it came from,
+    in square brackets, e.g. [book/ch06#014] or [blog/agents#009].
+  - Use only information present in the context chunks. Never use
+    outside knowledge, even when you are confident.
+  - If the context chunks do not contain enough information to answer
+    the question confidently, respond exactly with:
+    "I don't have enough information in the provided documents to answer this."
+  - Be concise and factual. Do not speculate.
+user_template: |
+  Context chunks:
+
+  {{CHUNKS}}
+
+  Question: {{QUESTION}}
