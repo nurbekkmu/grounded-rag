@@ -37,6 +37,13 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 
 MODEL_DEFAULT = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+_MODELS = {}
+
+
+def _model(name: str) -> CrossEncoder:
+    if name not in _MODELS:
+        _MODELS[name] = CrossEncoder(name)
+    return _MODELS[name]
 
 
 def rerank(query: str, candidates: list, model_name: str = MODEL_DEFAULT,
@@ -44,7 +51,7 @@ def rerank(query: str, candidates: list, model_name: str = MODEL_DEFAULT,
     """Rescore retrieve() candidates; returns top `keep` by cross-encoder
     score, each with rerank_score and rerank_rank added (fused rank kept
     in ranks/score for tracing)."""
-    model = CrossEncoder(model_name)
+    model = _model(model_name)
     pairs = [(query, c["chunk"]["text"]) for c in candidates]
     scores = model.predict(pairs, batch_size=16)
     for c, s in zip(candidates, scores):
