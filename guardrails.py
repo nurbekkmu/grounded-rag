@@ -8,10 +8,12 @@ spending a generation call. The default threshold is a placeholder
 until the golden set calibrates it.
 
 Layer 2, post-generation: every substantive sentence of the answer must
-be entailed by the chunk it cites. A local NLI cross-encoder scores
-(cited chunk text -> sentence) entailment; premises longer than the NLI
-window are checked in overlapping windows and the best score wins
-(same silent-truncation trap as embeddings — handled, not ignored).
+be entailed by the chunk it cites. A local NLI cross-encoder scores the
+claim against EACH sentence (and adjacent sentence pair) of the cited
+chunk, and the best entailment wins — SummaC-style max aggregation.
+Whole-chunk premises don't work: NLI models are trained on sentence
+pairs (MNLI), and a 300-word premise drifts to "neutral" even when it
+contains the claim verbatim (measured: p=0.001 on an identity claim).
 Any unsupported or uncited claim downgrades the whole answer to the
 fixed refusal string: a wrong answer wearing confident citations is
 the worst output this system could produce.
@@ -43,7 +45,7 @@ NLI_MODEL = "cross-encoder/nli-deberta-v3-base"
 MIN_RERANK = 0.0        # pre-generation floor on the best candidate
 ENTAIL_MIN = 0.5        # min P(entailment) for a claim to count as supported
 SENT_RE = re.compile(r"(?<=[.!?])\s+")
-PREMISE_WINDOW_WORDS = 320
+MAX_PREMISE_UNITS = 80  # cap on sentence units scored per claim
 
 
 def evidence_too_weak(shortlist: list, min_rerank: float = MIN_RERANK) -> bool:
@@ -58,16 +60,12 @@ class NliVerifier:
                                if lab.lower().startswith("entail"))
 
     def entail_prob(self, premise: str, hypothesis: str) -> float:
-        """Best P(entailment) across premise windows (NLI windows are
-        ~512 wordpieces; long chunks would silently truncate)."""
-        words = premise.split()
-        if len(words) <= PREMISE_WINDOW_WORDS:
-            windows = [premise]
-        else:
-            half = PREMISE_WINDOW_WORDS
-            windows = [" ".join(words[i:i + half])
-                       for i in range(0, len(words), half // 2)]
-        logits = self.model.predict([(w, hypothesis) for w in windows])
+        """Best P(entailment) of the hypothesis against each premise
+        sentence and each adjacent-sentence pair (max aggregation)."""
+        sents = [s.strip() for s in SENT_RE.split(premise) if s.strip()]
+        units = sents + [" ".join(p) for p in zip(sents, sents[1:])]
+        units = units[:MAX_PREMISE_UNITS] or [premise]
+        logits = self.model.predict([(u, hypothesis) for u in units])
         logits = np.atleast_2d(logits)
         probs = np.exp(logits) / np.exp(logits).sum(axis=1, keepdims=True)
         return float(probs[:, self.entail_idx].max())
@@ -117,7 +115,8 @@ def selftest():
                        f"[{chunk['chunk_id']}].")
     fabricated_claim = ("The book requires all chunks to be exactly 123 "
                         f"tokens long with zero overlap [{chunk['chunk_id']}].")
-    uncited_claim = "Retrieval-augmented generation was invented in 1985."
+    uncited_claim = ("Retrieval-augmented generation was first invented "
+                     "by researchers back in 1985.")
     text = " ".join([supported_claim, fabricated_claim, uncited_claim])
 
     result = verify(text, store, NliVerifier())
