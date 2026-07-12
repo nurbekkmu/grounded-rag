@@ -1,0 +1,26 @@
+# Weaviate for local dev. Requires Docker Desktop on Windows
+# (Weaviate's embedded mode does not support Windows).
+#   start:  docker compose up -d
+#   stop:   docker compose down        (data survives in the named volume)
+#
+# Vectorizer modules stay off on purpose: embeddings are computed locally
+# by embed.py (nomic-embed-text-v1.5) and pushed, keeping the embedding
+# layer keyless and reproducible. CI runs this same image as a GitHub
+# Actions service container.
+services:
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+    ports:
+      - "8080:8080"    # REST
+      - "50051:50051"  # gRPC (used by the python client)
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      ENABLE_MODULES: ""
+      QUERY_DEFAULTS_LIMIT: 25
+
+volumes:
+  weaviate_data:
