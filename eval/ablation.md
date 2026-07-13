@@ -7,8 +7,8 @@ Metrics follow Anthropic's contextual-retrieval definitions; failure-rate@20 is 
 |---|---|---|---|---|---|---|
 | baseline | bm25 | no | 0% | 78% | 100% | 0.571 |
 | baseline | bm25 | yes | 0% | 94% | 100% | 0.889 |
-| baseline | vector | no | _pending_ | | | |
-| baseline | vector | yes | _pending_ | | | |
-| baseline | hybrid | no | _pending_ | | | |
-| baseline | hybrid | yes | _pending_ | | | |
+| baseline | vector | no | 0% | 72% | 100% | 0.681 |
+| baseline | vector | yes | 0% | 94% | 100% | 0.889 |
+| baseline | hybrid | no | 0% | 94% | 100% | 0.800 |
+| baseline | hybrid | yes | 0% | 94% | 100% | 0.889 |
 | contextual | — | — | _pending: index not built_ | | | |
