@@ -47,6 +47,28 @@ ENTAIL_MIN = 0.5        # min P(entailment) for a claim to count as supported
 SENT_RE = re.compile(r"(?<=[.!?])\s+")
 MAX_PREMISE_UNITS = 80  # cap on sentence units scored per claim
 
+# Attribution phrasing kills NLI: "named in the book are X and Y" scores
+# p=0.003 against a premise that says exactly "are X and Y" (measured) —
+# the premise never calls itself "the book", so the model rightly can't
+# verify the meta-claim. The citation is the attribution; strip the
+# phrasing before scoring the factual content. Prompt v2 also tells the
+# generator not to write these phrases in the first place.
+ATTRIB_SUBS = [
+    (re.compile(r"^\s*according to the (book|blog|author|corpus|provided "
+                r"(?:context|documents))[,:]?\s*", re.I), ""),
+    (re.compile(r"\b(named|mentioned|described|listed|discussed|stated|"
+                r"noted)\s+(?:in|by)\s+the\s+(?:book|blog|author|corpus|"
+                r"documents?)\b", re.I), r"\1"),
+]
+
+
+def normalize_claim(text: str) -> str:
+    for pat, rep in ATTRIB_SUBS:
+        text = pat.sub(rep, text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r",\s*\.", ".", text)
+    return text.strip()
+
 
 def evidence_too_weak(shortlist: list, min_rerank: float = MIN_RERANK) -> bool:
     return not shortlist or max(c["rerank_score"] for c in shortlist) < min_rerank
@@ -79,7 +101,7 @@ def verify(answer_text: str, store: dict, verifier: NliVerifier) -> dict:
     report = []
     for sent in sentences:
         cited = CITE_RE.findall(sent)
-        bare = CITE_RE.sub("", sent).strip()
+        bare = normalize_claim(CITE_RE.sub("", sent))
         if not cited:
             status = "skipped" if len(bare.split()) < 7 else "uncited"
             report.append({"sentence": sent, "citations": [],
