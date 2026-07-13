@@ -33,7 +33,13 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 
 TERM_RE = re.compile(r"[a-z0-9]+(?:[-._][a-z0-9]+)*")
-COLLECTION = "Chunk"
+
+
+def collection_for(index_dir: str) -> str:
+    """One Weaviate collection per index dir (baseline / contextual /
+    book-only variants coexist for ablations)."""
+    base = os.path.basename(os.path.normpath(index_dir))
+    return "Chunk_" + re.sub(r"[^A-Za-z0-9]", "_", base)
 
 
 def bm25_terms(text: str) -> list:
@@ -65,16 +71,16 @@ def build_bm25(index_dir: str, chunks: list, texts: list):
           f"avg {sum(map(len, corpus)) // len(corpus)} terms -> {path}")
 
 
-def push_weaviate(chunks: list, vectors: np.ndarray):
+def push_weaviate(chunks: list, vectors: np.ndarray, collection: str):
     import weaviate
     from weaviate.classes.config import Configure, DataType, Property
 
     client = weaviate.connect_to_local()
     try:
-        if client.collections.exists(COLLECTION):
-            client.collections.delete(COLLECTION)
+        if client.collections.exists(collection):
+            client.collections.delete(collection)
         col = client.collections.create(
-            name=COLLECTION,
+            name=collection,
             vectorizer_config=Configure.Vectorizer.none(),
             properties=[
                 Property(name="chunk_id", data_type=DataType.TEXT),
@@ -102,7 +108,7 @@ def push_weaviate(chunks: list, vectors: np.ndarray):
                     },
                     vector=v.tolist(),
                 )
-        print(f"weaviate: {len(chunks)} objects -> collection {COLLECTION}")
+        print(f"weaviate: {len(chunks)} objects -> collection {collection}")
     finally:
         client.close()
 
@@ -132,7 +138,7 @@ def main():
     build_bm25(a.index_dir, chunks, texts)
     if not a.bm25_only:
         vectors = np.load(os.path.join(a.index_dir, "vectors.npy"))
-        push_weaviate(chunks, vectors)
+        push_weaviate(chunks, vectors, collection_for(a.index_dir))
 
 
 if __name__ == "__main__":

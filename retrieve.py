@@ -32,9 +32,10 @@ from os.path import join
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")   # Windows console default
 
+from index import collection_for
+
 RRF_K = 60
 QUERY_PREFIX = "search_query: "
-COLLECTION = "Chunk"
 
 CHUNKS_DEFAULT = ["data/processed/book_chunks.jsonl",
                   "data/processed/blog_chunks.jsonl"]
@@ -58,18 +59,22 @@ def bm25_search(index_dir: str, query: str, top_n: int) -> list:
     return [p["chunk_ids"][i] for i in order if scores[i] > 0]
 
 
-def vector_search(query: str, top_n: int) -> list:
+_EMBEDDER = []
+
+
+def vector_search(query: str, top_n: int, collection: str) -> list:
     """Ranked chunk_ids from the semantic arm (Weaviate near-vector)."""
     import weaviate
     from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer("nomic-ai/nomic-embed-text-v1.5",
-                                trust_remote_code=True)
-    qvec = model.encode([QUERY_PREFIX + query],
-                        normalize_embeddings=True)[0]
+    if not _EMBEDDER:
+        _EMBEDDER.append(SentenceTransformer("nomic-ai/nomic-embed-text-v1.5",
+                                             trust_remote_code=True))
+    qvec = _EMBEDDER[0].encode([QUERY_PREFIX + query],
+                               normalize_embeddings=True)[0]
     client = weaviate.connect_to_local()
     try:
-        col = client.collections.get(COLLECTION)
+        col = client.collections.get(collection)
         res = col.query.near_vector(near_vector=qvec.tolist(), limit=top_n)
         return [o.properties["chunk_id"] for o in res.objects]
     finally:
@@ -95,7 +100,8 @@ def retrieve(query: str, index_dir: str, chunk_paths=None,
     if mode in ("bm25", "hybrid"):
         rankings["bm25"] = bm25_search(index_dir, query, top_n)
     if mode in ("vector", "hybrid"):
-        rankings["vector"] = vector_search(query, top_n)
+        rankings["vector"] = vector_search(query, top_n,
+                                           collection_for(index_dir))
     candidates = rrf_fuse(rankings)[:k]
 
     store = load_chunks(chunk_paths or CHUNKS_DEFAULT)
