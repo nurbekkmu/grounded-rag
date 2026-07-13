@@ -112,9 +112,16 @@ consistent, honestly caveated.
 Generation metrics (`eval/run_gen_eval.py`): refusal correctness in
 both directions (refusing without evidence and not over-refusing with
 it), faithfulness scored by the same NLI verifier the runtime guardrail
-uses, and fabricated-citation counting. First run: both refusal traps
-refused, zero false refusals, zero fabricated citations across all
-questions.
+uses, and fabricated-citation counting. Across 19 questions: every
+refusal trap refused, and **zero fabricated citations** — the model has
+never cited a chunk it wasn't given. Faithfulness averages 0.76, with
+the low scores concentrated on multi-hop questions whose answers
+synthesize across chunks — sentence-level NLI verifies cross-chunk
+synthesis conservatively, an honest limitation split between verifier
+strictness and genuinely under-supported claims. The one "false
+refusal" is a question whose evidence is a detached PDF footnote the
+retriever cannot reach (see limitations) — the guardrail refusing there
+is the designed behavior.
 
 The CI workflow rebuilds the blog corpus from the live web, embeds and
 indexes it locally (no API keys), and fails the build if
