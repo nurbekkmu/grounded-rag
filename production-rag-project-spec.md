@@ -2,7 +2,7 @@
 
 **Document purpose:** This is the single source of truth for this project. It is written to be self-contained: a reader (human or LLM) with no prior conversation context should be able to understand the goal, architecture, evaluation methodology, and build plan, and give useful help on any part of it.
 
-**Status:** Design complete, implementation not started. Last updated: 2026-07-06.
+**Status:** Implementation ~85% complete — full pipeline live end to end (hybrid retrieval, reranking, cited generation, NLI guardrails, eval harness + CI written), baseline and book-contextual ablations measured. Outstanding: blog-half contexts (free-tier quota pacing), full-corpus contextual ablation, golden-set manual verification, GitHub publication. Last updated: 2026-07-13. See §14 for field notes that corrected the original design.
 
 ---
 
@@ -48,10 +48,10 @@ The author is a student / new graduate applying for **AI/ML engineer roles** and
 | Embeddings | `nomic-embed-text-v1.5` via sentence-transformers, **local** | $0, no rate limits, deterministic, CI runs without API keys. Chosen over BGE-small because BGE truncates at 512 tokens — a ~650-token chunk + 50–100-token contextual prefix would be silently cut. Nomic handles 8,192 tokens. Requires task prefixes: `search_document:` at index time, `search_query:` at query time |
 | Vector store | Weaviate, self-hosted via Docker Compose | Open source, production-grade. Note: Weaviate's embedded mode does not support Windows, so local dev runs it in Docker Desktop; CI runs it as a GitHub Actions service container. Weaviate's built-in hybrid search is deliberately NOT used for the main pipeline (custom BM25+RRF is the depth signal) but serves as a bonus ablation row |
 | Lexical search | `rank_bm25` | Simple, pure-Python BM25 |
-| Reranker | sentence-transformers **cross-encoder** (e.g., `BAAI/bge-reranker-base` or `ms-marco-MiniLM-L-6-v2`), local | $0, the guide's own suggestion |
+| Reranker | sentence-transformers **cross-encoder**: `ms-marco-MiniLM-L-6-v2` default (CPU-fast), `BAAI/bge-reranker-base` via `--rerank-model` | $0. Both truncate (query+chunk) at 512 tokens — documented limitation. Measured: MiniLM lowers MRR on hard paraphrase questions, motivating the model flag |
 | Contextualization LLM | Gemini Flash (free tier) | One call per chunk at index time; free tier absorbs it |
 | Generation LLM | Gemini Flash (free tier), temperature 0 | Groq / OpenRouter free tiers as fallback |
-| Citation verification | Local NLI cross-encoder (entailment), or Gemini judge | Free runtime guardrail |
+| Citation verification | `cross-encoder/nli-deberta-v3-base`, **sentence-level premises with SummaC-style max aggregation** | Free runtime guardrail. Whole-chunk premises drift to neutral on MNLI-trained models (identity claim measured at p=0.001); attribution phrases ("named in the book") are stripped before scoring |
 | Eval framework | RAGAS (faithfulness etc.) with Gemini as judge + custom retrieval metrics script | RAGAS is purpose-built for RAG evaluation |
 | CI | GitHub Actions | Eval gate on every PR; API keys as repo secrets |
 
@@ -319,7 +319,18 @@ production-rag/
 - RAGAS: https://docs.ragas.io — RAG evaluation framework.
 
 ## 13. Current status and open questions
-- Design finalized as specified above; **no code written yet, repo not created**.
-- Open: confirm the author owns a digital copy of the *AI Engineering* book (EPUB/PDF). If not, start blog-only — architecture unchanged.
+- Pipeline implemented end to end and measured; local git repo with 20+ commits. Book: PDF, 449 chunks, fully contextualized. Blog: 38 posts, 484 chunks, contexts ~45% done (free-tier quota pacing).
+- Golden set: 19 questions across five categories (paraphrase added as a fifth — questions with zero keyword overlap against their evidence). All entries `verified: false` pending the author's manual pass; q014 is a known chunking-artifact case (see §14.7).
+- Measured so far: full-corpus baseline ablation (hybrid fusion beats single arms pre-rerank; reranker lifts all modes to a shared ceiling) and a book-only contextual comparison (contextual embeddings halve vector failure-rate@20, 17%→8%; contextual BM25 +8pts recall@5).
+- Open: blog contexts completion → full-corpus contextual ablation; generation-eval re-run under prompt v2; golden verification; GitHub publication (CI activates on push).
 - Author constraint: everything must run on free tiers / local models ($0 total).
 - Author preference: repo docs and commits in a plain engineer voice — no AI-style emoji headers, should read human-written.
+
+## 14. Field notes — where reality corrected the design
+1. **Gemini free tier (mid-2026):** 20 requests/day/key/model (`generate_content_free_tier_requests`). The 2.0 family is retired (`limit: 0`); 2.5-flash/-lite and 3.x models each have separate daily pools. Multiple keys from separate Google projects multiply capacity; per-stage disk caching makes multi-day runs cheap to resume.
+2. **Explicit content caching is unavailable on free tier** (`TotalCachedContentStorageTokensPerModelFreeTier limit=0`). Implicit caching works: document-first prompt ordering measured up to 97% prefix reuse on contiguous same-document calls.
+3. **Gemini 2.5 Flash thinks by default**, and reasoning spends `max_output_tokens`. For summarization-shaped work set `thinking_config.thinking_budget: 0` or outputs come back truncated to a few words.
+4. **Embedder windows are the silent killer:** chunk + contextual prefix must fit the embedding model's context, or contextual retrieval hurts invisibly (BGE-small's 512 vs Nomic's 8k decided the embedder).
+5. **NLI verification needs sentence-level premises** (SummaC-style max aggregation) and attribution-phrase stripping — both measured failure modes, both fixed with the verifier's own selftest as regression guard.
+6. **Shared API keys across projects are a real operational hazard** — a sibling project's cron burned this project's model pool for a week before the error payloads exposed it.
+7. **PDF footnotes detach from their referents during chunking** (page-bottom placement), creating orphaned facts no retriever reaches semantically — q014's "self-consistency" name lives only in such a fragment. Known limitation; candidate future fix is footnote-aware chunking.

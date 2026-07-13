@@ -68,7 +68,8 @@ def _agg(subset):
 
 def evaluate(golden_path: str, mode: str, use_rerank: bool,
              top_n: int = 75, index_dir: str = "data/index/baseline",
-             chunks=None, split: str = None) -> dict:
+             chunks=None, split: str = None,
+             rerank_model: str = None) -> dict:
     """Run retrieval metrics for one configuration. Importable — the
     ablation harness drives this same function across the config matrix.
     split="blog" restricts to blog-evidence questions (what CI can run:
@@ -84,8 +85,9 @@ def evaluate(golden_path: str, mode: str, use_rerank: bool,
         candidates = retrieve(q["question"], index_dir,
                               chunks or CHUNKS_DEFAULT, mode, top_n, k=top_n)
         if use_rerank:
-            from rerank import rerank
-            candidates = rerank(q["question"], candidates, keep=K_EVAL)
+            from rerank import MODEL_DEFAULT, rerank
+            candidates = rerank(q["question"], candidates,
+                                rerank_model or MODEL_DEFAULT, keep=K_EVAL)
         ranked_ids = [c["chunk_id"] for c in candidates]
         rows.append(eval_question(q, ranked_ids))
     return {
@@ -108,6 +110,8 @@ def main():
                     default="hybrid")
     ap.add_argument("--rerank", action="store_true",
                     help="apply the cross-encoder before measuring")
+    ap.add_argument("--rerank-model",
+                    help="override the cross-encoder (default MiniLM)")
     ap.add_argument("--top-n", type=int, default=75)
     ap.add_argument("--index", default="data/index/baseline")
     ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
@@ -119,7 +123,7 @@ def main():
     a = ap.parse_args()
 
     result = evaluate(a.golden, a.mode, a.rerank, a.top_n, a.index,
-                      a.chunks, a.split)
+                      a.chunks, a.split, a.rerank_model)
     if result["unverified"]:
         print(f"WARNING: {result['unverified']}/{result['total_golden']} "
               f"golden entries are not yet manually verified — numbers "
