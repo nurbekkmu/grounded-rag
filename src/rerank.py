@@ -36,7 +36,9 @@ from retrieve import CHUNKS_DEFAULT, retrieve
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 
-MODEL_DEFAULT = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+from config import cfg as _cfg
+
+MODEL_DEFAULT = _cfg("rerank.model")
 _MODELS = {}
 
 

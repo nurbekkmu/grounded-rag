@@ -34,7 +34,9 @@ from retrieve import CHUNKS_DEFAULT, retrieve
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 
-PROMPT_FILE = "prompts/answer_with_citations.yaml"
+from config import cfg as _cfg
+
+PROMPT_FILE = _cfg("generation.prompt")
 CITE_RE = re.compile(r"\[([a-z0-9_/#.-]+#\d{3})\]")
 
 
@@ -113,13 +115,14 @@ def answer(query: str, candidates: list, cfg: dict = None,
 
 
 def main():
+    from config import cfg as rcfg
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
     ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default="hybrid")
-    ap.add_argument("--top-n", type=int, default=75)
-    ap.add_argument("--keep", type=int, default=8)
-    ap.add_argument("--index", default="data/index/baseline")
+                    default=rcfg("retrieval.mode"))
+    ap.add_argument("--top-n", type=int, default=rcfg("retrieval.top_n"))
+    ap.add_argument("--keep", type=int, default=rcfg("rerank.keep"))
+    ap.add_argument("--index", default=rcfg("retrieval.index"))
     ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
     ap.add_argument("--json", action="store_true",
                     help="print the full response object")

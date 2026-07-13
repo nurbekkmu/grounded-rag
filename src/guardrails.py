@@ -151,15 +151,17 @@ def selftest():
 
 
 def main():
+    from config import cfg as rcfg
     ap = argparse.ArgumentParser()
     ap.add_argument("query", nargs="?")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default="hybrid")
-    ap.add_argument("--top-n", type=int, default=75)
-    ap.add_argument("--keep", type=int, default=8)
-    ap.add_argument("--min-rerank", type=float, default=MIN_RERANK)
-    ap.add_argument("--index", default="data/index/baseline")
+                    default=rcfg("retrieval.mode"))
+    ap.add_argument("--top-n", type=int, default=rcfg("retrieval.top_n"))
+    ap.add_argument("--keep", type=int, default=rcfg("rerank.keep"))
+    ap.add_argument("--min-rerank", type=float,
+                    default=rcfg("guardrails.min_rerank"))
+    ap.add_argument("--index", default=rcfg("retrieval.index"))
     ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
     a = ap.parse_args()
 

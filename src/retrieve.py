@@ -111,13 +111,14 @@ def retrieve(query: str, index_dir: str, chunk_paths=None,
 
 
 def main():
+    from config import cfg
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
     ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default="hybrid")
-    ap.add_argument("--top-n", type=int, default=75)
+                    default=cfg("retrieval.mode"))
+    ap.add_argument("--top-n", type=int, default=cfg("retrieval.top_n"))
     ap.add_argument("--k", type=int, default=10)
-    ap.add_argument("--index", default="data/index/baseline")
+    ap.add_argument("--index", default=cfg("retrieval.index"))
     ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
     a = ap.parse_args()
 

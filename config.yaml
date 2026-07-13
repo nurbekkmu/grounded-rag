@@ -1,0 +1,23 @@
+# Runtime tunables — single source of truth (spec §6).
+# Priority: CLI flag > this file > built-in default.
+#
+# Build-time settings deliberately NOT here: chunk sizes live in
+# src/chunk_book.py (changing them invalidates contexts, embeddings and
+# indexes — see the cache-invalidation chain in the spec), and the
+# embedding model lives in src/embed.py (changing it means re-embedding
+# everything; the index manifest records which model built it).
+
+retrieval:
+  mode: hybrid            # vector | bm25 | hybrid
+  top_n: 75               # candidates per retrieval arm
+  index: data/index/baseline
+
+rerank:
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  keep: 8                 # chunks handed to generation
+
+guardrails:
+  min_rerank: 0.0         # pre-generation evidence floor; calibrate on golden set
+
+generation:
+  prompt: prompts/answer_with_citations.yaml
