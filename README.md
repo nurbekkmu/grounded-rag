@@ -97,9 +97,17 @@ Baseline results (933 chunks, hybrid = both arms fused with RRF):
 
 Fusion beats either arm alone before any reranking, and the
 cross-encoder lifts every mode to the same ceiling — both textbook
-claims, reproduced on this corpus. The full table (including the
-contextual-retrieval comparison against Anthropic's published numbers)
-regenerates with `python eval/ablate.py` into `eval/ablation.md`.
+claims, reproduced on this corpus. The full table regenerates with
+`python eval/ablate.py` into `eval/ablation.md`.
+
+An early book-only comparison of contextual retrieval
+(`eval/book_contextual_comparison.md`) shows the technique working as
+published: contextual embeddings halved the vector arm's failure-rate@20
+(17% to 8%, rescuing a cross-chapter multi-hop question), and
+contextual BM25 lifted lexical recall@5 by 8 points. Anthropic reported
+a 35% relative failure reduction for contextual embeddings; this corpus
+measures ~53% on a smaller, harder question set — directionally
+consistent, honestly caveated.
 
 Generation metrics (`eval/run_gen_eval.py`): refusal correctness in
 both directions (refusing without evidence and not over-refusing with
