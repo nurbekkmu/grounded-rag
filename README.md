@@ -18,7 +18,7 @@ it refuses.
 Question the corpus can answer:
 
 ```
-$ python guardrails.py "What is contextual retrieval and how does it improve retrieval quality?"
+$ python src/guardrails.py "What is contextual retrieval and how does it improve retrieval quality?"
 
 Contextual retrieval is a tactic that can increase the chance of relevant
 documents being fetched [book/ch06#014]. It involves augmenting each chunk
@@ -33,7 +33,7 @@ and the augmented chunk is then indexed by the retrieval algorithm
 Question it can't:
 
 ```
-$ python guardrails.py "What is the population of Tashkent?"
+$ python src/guardrails.py "What is the population of Tashkent?"
 
 I don't have enough information in the provided documents to answer this.
 (refused before generation: best rerank score -9.39)
@@ -170,11 +170,11 @@ over private data.
 ```
 docker compose up -d                      # Weaviate
 pip install -r requirements.txt
-python ingest_blog.py                     # fetch corpus (blog half)
-python chunk_blog.py
-python embed.py data/index/baseline data/processed/blog_chunks.jsonl
-python index.py data/index/baseline data/processed/blog_chunks.jsonl
-python guardrails.py "when should I finetune instead of using RAG?"
+python src/ingest_blog.py                     # fetch corpus (blog half)
+python src/chunk_blog.py
+python src/embed.py data/index/baseline data/processed/blog_chunks.jsonl
+python src/index.py data/index/baseline data/processed/blog_chunks.jsonl
+python src/guardrails.py "when should I finetune instead of using RAG?"
 ```
 
 Generation needs `GEMINI_API_KEYS` (comma-separated, free tier) in

@@ -49,13 +49,13 @@ jobs:
 
       - name: Ingest and chunk the blog corpus
         run: |
-          python ingest_blog.py
-          python chunk_blog.py
+          python src/ingest_blog.py
+          python src/chunk_blog.py
 
       - name: Embed and index (local Nomic, no API keys)
         run: |
-          python embed.py data/index/baseline data/processed/blog_chunks.jsonl
-          python index.py data/index/baseline data/processed/blog_chunks.jsonl
+          python src/embed.py data/index/baseline data/processed/blog_chunks.jsonl
+          python src/index.py data/index/baseline data/processed/blog_chunks.jsonl
 
       - name: Retrieval quality gate (blog split)
         run: >
