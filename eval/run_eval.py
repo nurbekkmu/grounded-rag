@@ -68,11 +68,17 @@ def _agg(subset):
 
 def evaluate(golden_path: str, mode: str, use_rerank: bool,
              top_n: int = 75, index_dir: str = "data/index/baseline",
-             chunks=None) -> dict:
+             chunks=None, split: str = None) -> dict:
     """Run retrieval metrics for one configuration. Importable — the
-    ablation harness drives this same function across the config matrix."""
+    ablation harness drives this same function across the config matrix.
+    split="blog" restricts to blog-evidence questions (what CI can run:
+    the book never leaves the author's machine)."""
     golden = [json.loads(l) for l in open(golden_path, encoding="utf-8")]
     questions = [q for q in golden if q["category"] != "refusal"]
+    if split:
+        questions = [q for q in questions if q["split"] == split]
+    if not questions:
+        raise SystemExit(f"no golden questions with split={split!r}")
     rows = []
     for q in questions:
         candidates = retrieve(q["question"], index_dir,
@@ -105,10 +111,15 @@ def main():
     ap.add_argument("--top-n", type=int, default=75)
     ap.add_argument("--index", default="data/index/baseline")
     ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
+    ap.add_argument("--split", choices=["book", "blog", "mixed"],
+                    help="restrict to one evidence split (CI uses blog)")
+    ap.add_argument("--max-failure", type=float,
+                    help="CI gate: exit 1 if failure-rate@20 exceeds this")
     ap.add_argument("--json-out")
     a = ap.parse_args()
 
-    result = evaluate(a.golden, a.mode, a.rerank, a.top_n, a.index, a.chunks)
+    result = evaluate(a.golden, a.mode, a.rerank, a.top_n, a.index,
+                      a.chunks, a.split)
     if result["unverified"]:
         print(f"WARNING: {result['unverified']}/{result['total_golden']} "
               f"golden entries are not yet manually verified — numbers "
@@ -134,6 +145,12 @@ def main():
         with open(a.json_out, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2)
         print(f"wrote {a.json_out}")
+
+    if a.max_failure is not None and \
+            overall["failure_rate@20"] > a.max_failure:
+        print(f"GATE FAILED: failure-rate@20 "
+              f"{overall['failure_rate@20']:.0%} > {a.max_failure:.0%}")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

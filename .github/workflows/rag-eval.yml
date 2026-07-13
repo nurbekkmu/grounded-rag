@@ -1,0 +1,61 @@
+# RAG quality gate (spec §7.4): every push/PR rebuilds the blog corpus
+# from the live web (the book never leaves the author's machine), embeds
+# and indexes it, and fails the build if retrieval quality regresses.
+#
+# Generation metrics (faithfulness, refusal) need Gemini quota and run
+# separately / manually — retrieval metrics are free, local, and gate here.
+name: RAG quality gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  retrieval-eval:
+    runs-on: ubuntu-latest
+    services:
+      weaviate:
+        image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+        ports:
+          - 8080:8080
+          - 50051:50051
+        env:
+          AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+          PERSISTENCE_DATA_PATH: /var/lib/weaviate
+          DEFAULT_VECTORIZER_MODULE: none
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Cache models (HF) and fetched blog corpus
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            data/raw/blog
+          key: models-blog-${{ hashFiles('requirements.txt') }}
+
+      - run: pip install -r requirements.txt
+
+      - name: Ingest and chunk the blog corpus
+        run: |
+          python ingest_blog.py
+          python chunk_blog.py
+
+      - name: Embed and index (local Nomic, no API keys)
+        run: |
+          python embed.py data/index/baseline data/processed/blog_chunks.jsonl
+          python index.py data/index/baseline data/processed/blog_chunks.jsonl
+
+      - name: Retrieval quality gate (blog split)
+        run: >
+          python eval/run_eval.py --mode hybrid --rerank --split blog
+          --chunks data/processed/blog_chunks.jsonl
+          --max-failure 0.34
