@@ -44,6 +44,9 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      - name: Unit tests (pure functions, no models)
+        run: python -m pytest tests -q
+
       - name: Ingest and chunk the blog corpus
         run: |
           python ingest_blog.py

@@ -17,3 +17,6 @@ einops>=0.8
 numpy>=1.26
 rank-bm25>=0.2
 weaviate-client>=4.9
+
+# tests
+pytest>=8.0

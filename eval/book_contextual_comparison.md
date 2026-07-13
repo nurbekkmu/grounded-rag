@@ -41,6 +41,13 @@ manually verified — treat as provisional).
    baseline). The MiniLM reranker demotes some correct top-1 evidence
    on paraphrase questions — the first measured argument for testing a
    stronger reranker via the --model flag.
+6. **Follow-up: the stronger reranker didn't help.**
+   `BAAI/bge-reranker-base` (278M params, ~12x slower on CPU) on the
+   same config: recall@5 83%, MRR 0.694 — matching MiniLM's MRR and
+   trailing its recall@5 (88%). The regression is a property of
+   cross-encoder reranking on these paraphrase questions, not of the
+   small model; MiniLM stays the default with measurements to justify
+   it.
 
 Regenerate: the eight runs are `eval/run_eval.py --split book` against
 `data/index/book-baseline` and `data/index/book-contextual`.
