@@ -55,6 +55,46 @@ def eval_question(q: dict, ranked_ids: list) -> dict:
     }
 
 
+def _agg(subset):
+    n = len(subset)
+    return {
+        "n": n,
+        "failure_rate@20": sum(r["failed_at_20"] for r in subset) / n,
+        **{f"recall@{k}": sum(r["recall"][k] for r in subset) / n
+           for k in RECALL_KS},
+        "mrr": sum(r["reciprocal_rank"] for r in subset) / n,
+    }
+
+
+def evaluate(golden_path: str, mode: str, use_rerank: bool,
+             top_n: int = 75, index_dir: str = "data/index/baseline",
+             chunks=None) -> dict:
+    """Run retrieval metrics for one configuration. Importable — the
+    ablation harness drives this same function across the config matrix."""
+    golden = [json.loads(l) for l in open(golden_path, encoding="utf-8")]
+    questions = [q for q in golden if q["category"] != "refusal"]
+    rows = []
+    for q in questions:
+        candidates = retrieve(q["question"], index_dir,
+                              chunks or CHUNKS_DEFAULT, mode, top_n, k=top_n)
+        if use_rerank:
+            from rerank import rerank
+            candidates = rerank(q["question"], candidates, keep=K_EVAL)
+        ranked_ids = [c["chunk_id"] for c in candidates]
+        rows.append(eval_question(q, ranked_ids))
+    return {
+        "config": {"mode": mode, "rerank": use_rerank, "top_n": top_n,
+                   "index": index_dir},
+        "overall": _agg(rows),
+        "by_category": {cat: _agg([r for r in rows
+                                   if r["category"] == cat])
+                        for cat in sorted({r["category"] for r in rows})},
+        "rows": rows,
+        "unverified": sum(1 for q in golden if not q.get("verified")),
+        "total_golden": len(golden),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--golden", default="eval/golden_set.jsonl")
@@ -68,40 +108,15 @@ def main():
     ap.add_argument("--json-out")
     a = ap.parse_args()
 
-    golden = [json.loads(l) for l in open(a.golden, encoding="utf-8")]
-    questions = [q for q in golden if q["category"] != "refusal"]
-    unverified = sum(1 for q in golden if not q.get("verified"))
-    if unverified:
-        print(f"WARNING: {unverified}/{len(golden)} golden entries are "
-              f"not yet manually verified — numbers are provisional\n")
+    result = evaluate(a.golden, a.mode, a.rerank, a.top_n, a.index, a.chunks)
+    if result["unverified"]:
+        print(f"WARNING: {result['unverified']}/{result['total_golden']} "
+              f"golden entries are not yet manually verified — numbers "
+              f"are provisional\n")
+    overall, by_cat, rows = (result["overall"], result["by_category"],
+                             result["rows"])
 
-    rows = []
-    for q in questions:
-        candidates = retrieve(q["question"], a.index, a.chunks,
-                              a.mode, a.top_n, k=a.top_n)
-        if a.rerank:
-            from rerank import rerank
-            candidates = rerank(q["question"], candidates, keep=K_EVAL)
-        ranked_ids = [c["chunk_id"] for c in candidates]
-        rows.append(eval_question(q, ranked_ids))
-
-    def agg(subset):
-        n = len(subset)
-        return {
-            "n": n,
-            "failure_rate@20": sum(r["failed_at_20"] for r in subset) / n,
-            **{f"recall@{k}": sum(r["recall"][k] for r in subset) / n
-               for k in RECALL_KS},
-            "mrr": sum(r["reciprocal_rank"] for r in subset) / n,
-        }
-
-    config = {"mode": a.mode, "rerank": a.rerank, "top_n": a.top_n,
-              "index": a.index}
-    overall = agg(rows)
-    by_cat = {cat: agg([r for r in rows if r["category"] == cat])
-              for cat in sorted({r["category"] for r in rows})}
-
-    print(f"config: {config}")
+    print(f"config: {result['config']}")
     print(f"overall (n={overall['n']}):  "
           f"failure@20={overall['failure_rate@20']:.0%}  "
           + "  ".join(f"recall@{k}={overall[f'recall@{k}']:.0%}"
@@ -117,8 +132,7 @@ def main():
 
     if a.json_out:
         with open(a.json_out, "w", encoding="utf-8") as f:
-            json.dump({"config": config, "overall": overall,
-                       "by_category": by_cat, "rows": rows}, f, indent=2)
+            json.dump(result, f, indent=2)
         print(f"wrote {a.json_out}")
 
 

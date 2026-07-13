@@ -1,0 +1,67 @@
+[
+  {
+    "index": "baseline",
+    "mode": "bm25",
+    "rerank": false,
+    "status": "ok",
+    "metrics": {
+      "n": 9,
+      "failure_rate@20": 0.0,
+      "recall@5": 0.7777777777777778,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.5714285714285715
+    },
+    "unverified": 11,
+    "total_golden": 11
+  },
+  {
+    "index": "baseline",
+    "mode": "bm25",
+    "rerank": true,
+    "status": "ok",
+    "metrics": {
+      "n": 9,
+      "failure_rate@20": 0.0,
+      "recall@5": 0.9444444444444444,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.8888888888888888
+    },
+    "unverified": 11,
+    "total_golden": 11
+  },
+  {
+    "index": "baseline",
+    "mode": "vector",
+    "rerank": false,
+    "status": "pending",
+    "reason": "WeaviateConnectionError: Connection to Weaviate failed. Details: Error: timed out. \nIs Weaviate running a"
+  },
+  {
+    "index": "baseline",
+    "mode": "vector",
+    "rerank": true,
+    "status": "pending",
+    "reason": "WeaviateConnectionError: Connection to Weaviate failed. Details: Error: timed out. \nIs Weaviate running a"
+  },
+  {
+    "index": "baseline",
+    "mode": "hybrid",
+    "rerank": false,
+    "status": "pending",
+    "reason": "WeaviateConnectionError: Connection to Weaviate failed. Details: Error: timed out. \nIs Weaviate running a"
+  },
+  {
+    "index": "baseline",
+    "mode": "hybrid",
+    "rerank": true,
+    "status": "pending",
+    "reason": "WeaviateConnectionError: Connection to Weaviate failed. Details: Error: timed out. \nIs Weaviate running a"
+  },
+  {
+    "index": "contextual",
+    "status": "pending",
+    "reason": "index not built"
+  }
+]
