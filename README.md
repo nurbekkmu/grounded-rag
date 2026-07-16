@@ -127,6 +127,31 @@ The CI workflow rebuilds the blog corpus from the live web, embeds and
 indexes it locally (no API keys), and fails the build if
 failure-rate@20 regresses past the threshold.
 
+## Latency budget
+
+Measured with `eval/measure_latency.py` (per-stage flight recorder,
+traces appended to `data/logs/queries.jsonl`), on a CPU-only laptop,
+warm model caches, cold start excluded and reported separately:
+
+| stage | P50 | P95 |
+|---|---|---|
+| hybrid retrieval (incl. query embedding) | 1.4 s | 1.7 s |
+| cross-encoder rerank (75 pairs) | 6.2 s | 7.2 s |
+| generation (Gemini Flash) | 4.3 s | 6.3 s |
+| NLI claim verification | 7.8 s | **90 s** |
+| end-to-end | ~20 s | ~104 s |
+
+(Local stages: n=11; full pipeline: n=4 — small samples, honest ones.)
+Cold start is ~26–46 s of one-time model loading. Two findings worth
+the measurement: the reranker is 81% of local latency (75 pairs ×
+~12 ms each — capping candidates at 30 is the obvious experiment), and
+verification has an unbounded long tail (cost scales with answer
+sentences × premise units, so one long multi-chunk answer hit 90 s).
+This system prioritizes retrieval quality and verifiability over
+latency by design; the numbered fixes (candidate cap, verification
+batching/caps, ONNX-quantized cross-encoders, GPU) are the roadmap for
+making it interactive.
+
 ## Things that broke and what they taught
 
 These cost real hours and shaped the design more than anything that
