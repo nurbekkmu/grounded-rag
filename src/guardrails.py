@@ -22,8 +22,8 @@ The runtime guardrail here and the offline faithfulness metric in the
 eval harness are the same idea measured in two places.
 
 Usage:
-  python guardrails.py "question" [--mode hybrid] [--keep 8] ...   full pipeline
-  python guardrails.py --selftest                                  offline check
+  python src/guardrails.py "question" [--mode hybrid] [--keep 8]   full pipeline
+  python src/guardrails.py --selftest                              offline check
 Deps:  pip install sentence-transformers
 """
 
@@ -62,62 +62,113 @@ ATTRIB_SUBS = [
 ]
 
 
-def normalize_claim(text: str) -> str:
-    for pat, rep in ATTRIB_SUBS:
-        text = pat.sub(rep, text)
+def normalize_claim(text):
+    """Strip attribution phrasing and tidy the punctuation left behind."""
+    for pattern, replacement in ATTRIB_SUBS:
+        text = pattern.sub(replacement, text)
     text = re.sub(r"\s+([,.;:])", r"\1", text)
     text = re.sub(r",\s*\.", ".", text)
     return text.strip()
 
 
-def evidence_too_weak(shortlist: list, min_rerank: float = MIN_RERANK) -> bool:
-    return not shortlist or max(c["rerank_score"] for c in shortlist) < min_rerank
+def evidence_too_weak(shortlist, min_rerank=MIN_RERANK):
+    """Layer 1: is the best candidate still below the evidence floor?"""
+    if not shortlist:
+        return True
+    best_score = max(candidate["rerank_score"] for candidate in shortlist)
+    return best_score < min_rerank
 
 
 class NliVerifier:
-    def __init__(self, model_name: str = NLI_MODEL):
+    """Scores whether a premise text entails a claim, using a local
+    NLI cross-encoder."""
+
+    def __init__(self, model_name=NLI_MODEL):
         self.model = CrossEncoder(model_name)
+        # Find which output column of the 3-class model means
+        # "entailment" (the others are contradiction and neutral).
         id2label = self.model.model.config.id2label
-        self.entail_idx = next(i for i, lab in id2label.items()
-                               if lab.lower().startswith("entail"))
+        self.entail_idx = None
+        for index, label in id2label.items():
+            if label.lower().startswith("entail"):
+                self.entail_idx = index
+                break
 
-    def entail_prob(self, premise: str, hypothesis: str) -> float:
-        """Best P(entailment) of the hypothesis against each premise
-        sentence and each adjacent-sentence pair (max aggregation)."""
-        sents = [s.strip() for s in SENT_RE.split(premise) if s.strip()]
-        units = sents + [" ".join(p) for p in zip(sents, sents[1:])]
-        units = units[:MAX_PREMISE_UNITS] or [premise]
-        logits = self.model.predict([(u, hypothesis) for u in units])
-        logits = np.atleast_2d(logits)
-        probs = np.exp(logits) / np.exp(logits).sum(axis=1, keepdims=True)
-        return float(probs[:, self.entail_idx].max())
+    def entail_prob(self, premise, hypothesis):
+        """Best P(entailment) of the hypothesis against the premise.
+
+        The premise is split into sentences; the claim is scored
+        against each sentence and each adjacent pair, and the best
+        score wins (max aggregation).
+        """
+        sentences = []
+        for part in SENT_RE.split(premise):
+            if part.strip():
+                sentences.append(part.strip())
+
+        units = list(sentences)
+        for first, second in zip(sentences, sentences[1:]):
+            units.append(first + " " + second)
+        units = units[:MAX_PREMISE_UNITS]
+        if not units:
+            units = [premise]
+
+        pairs = [(unit, hypothesis) for unit in units]
+        logits = np.atleast_2d(self.model.predict(pairs))
+
+        # Softmax turns the 3-class logits into probabilities per row.
+        exponentials = np.exp(logits)
+        probabilities = exponentials / exponentials.sum(axis=1,
+                                                        keepdims=True)
+        return float(probabilities[:, self.entail_idx].max())
 
 
-def verify(answer_text: str, store: dict, verifier: NliVerifier) -> dict:
-    """Sentence-level audit. store: chunk_id -> chunk dict (the shortlist
-    the generator saw). Returns {passed, sentences: [...]} where each
-    sentence gets a status: supported / unsupported / uncited / skipped."""
-    sentences = [s.strip() for s in SENT_RE.split(answer_text) if s.strip()]
+def verify(answer_text, store, verifier):
+    """Layer 2: sentence-level audit of a generated answer.
+
+    store maps chunk_id -> chunk dict (the shortlist the generator
+    saw). Every sentence gets a status:
+      supported    - cited, and the cited chunks entail it
+      unsupported  - cited, but the evidence does not back it
+      uncited      - a substantive claim with no citation at all
+      skipped      - short boilerplate not worth checking
+    Returns {"passed": bool, "sentences": [...]}.
+    """
+    sentences = []
+    for part in SENT_RE.split(answer_text):
+        if part.strip():
+            sentences.append(part.strip())
+
     report = []
-    for sent in sentences:
-        cited = CITE_RE.findall(sent)
-        bare = normalize_claim(CITE_RE.sub("", sent))
-        if not cited:
-            status = "skipped" if len(bare.split()) < 7 else "uncited"
-            report.append({"sentence": sent, "citations": [],
+    for sentence in sentences:
+        cited_ids = CITE_RE.findall(sentence)
+        bare_claim = normalize_claim(CITE_RE.sub("", sentence))
+
+        if not cited_ids:
+            is_boilerplate = len(bare_claim.split()) < 7
+            status = "skipped" if is_boilerplate else "uncited"
+            report.append({"sentence": sentence, "citations": [],
                            "status": status})
             continue
-        known = [cid for cid in cited if cid in store]
-        if not known:
-            report.append({"sentence": sent, "citations": cited,
+
+        known_ids = [cid for cid in cited_ids if cid in store]
+        if not known_ids:
+            report.append({"sentence": sentence, "citations": cited_ids,
                            "status": "unsupported", "entail_p": 0.0})
             continue
-        premise = "\n\n".join(store[cid]["text"] for cid in known)
-        p = verifier.entail_prob(premise, bare)
-        report.append({"sentence": sent, "citations": cited,
-                       "status": "supported" if p >= ENTAIL_MIN
-                       else "unsupported", "entail_p": round(p, 3)})
-    passed = all(r["status"] in ("supported", "skipped") for r in report)
+
+        premise = "\n\n".join(store[cid]["text"] for cid in known_ids)
+        probability = verifier.entail_prob(premise, bare_claim)
+        if probability >= ENTAIL_MIN:
+            status = "supported"
+        else:
+            status = "unsupported"
+        report.append({"sentence": sentence, "citations": cited_ids,
+                       "status": status,
+                       "entail_p": round(probability, 3)})
+
+    passed = all(entry["status"] in ("supported", "skipped")
+                 for entry in report)
     return {"passed": passed, "sentences": report}
 
 
@@ -126,12 +177,14 @@ def selftest():
     fabricated one must fail, an uncited one must be flagged."""
     import json
     chunk = None
-    for line in open("data/processed/book_chunks.jsonl", encoding="utf-8"):
-        c = json.loads(line)
-        if c["chunk_id"] == "book/ch06#014":     # the chunking-strategy chunk
-            chunk = c
-            break
+    with open("data/processed/book_chunks.jsonl", encoding="utf-8") as f:
+        for line in f:
+            record = json.loads(line)
+            if record["chunk_id"] == "book/ch06#014":
+                chunk = record       # the chunking-strategy chunk
+                break
     store = {chunk["chunk_id"]: chunk}
+
     supported_claim = ("The chunking strategy you use can significantly "
                        "impact the performance of your retrieval system "
                        f"[{chunk['chunk_id']}].")
@@ -142,11 +195,12 @@ def selftest():
     text = " ".join([supported_claim, fabricated_claim, uncited_claim])
 
     result = verify(text, store, NliVerifier())
-    for r in result["sentences"]:
-        p = r.get("entail_p", "-")
-        print(f"  [{r['status']:11s}] p={p}  {r['sentence'][:70]}")
+    for entry in result["sentences"]:
+        probability = entry.get("entail_p", "-")
+        print(f"  [{entry['status']:11s}] p={probability}  "
+              f"{entry['sentence'][:70]}")
     expected = ["supported", "unsupported", "uncited"]
-    got = [r["status"] for r in result["sentences"]]
+    got = [entry["status"] for entry in result["sentences"]]
     print("selftest:", "PASS" if got == expected else f"FAIL {got}")
 
 
@@ -171,14 +225,15 @@ def main():
     if not a.query:
         ap.error("query required unless --selftest")
 
-    cfg = load_prompt()
+    prompt_cfg = load_prompt()
+
     net = retrieve(a.query, a.index, a.chunks, a.mode, a.top_n, k=a.top_n)
     shortlist = rerank(a.query, net, keep=a.keep)
 
     if evidence_too_weak(shortlist, a.min_rerank):
-        print(cfg["refusal"])
-        print("(refused before generation: best rerank score "
-              f"{max((c['rerank_score'] for c in shortlist), default=None)})")
+        best = max((c["rerank_score"] for c in shortlist), default=None)
+        print(prompt_cfg["refusal"])
+        print(f"(refused before generation: best rerank score {best})")
         return
 
     result = answer(a.query, shortlist)
@@ -192,11 +247,11 @@ def main():
         print(result["answer"])
         print("\n(citation check: all claims supported)")
     else:
-        print(cfg["refusal"])
+        print(prompt_cfg["refusal"])
         print("\n(downgraded: unsupported or uncited claims)")
-    for r in audit["sentences"]:
-        if r["status"] not in ("supported", "skipped"):
-            print(f"  [{r['status']}] {r['sentence'][:90]}")
+    for entry in audit["sentences"]:
+        if entry["status"] not in ("supported", "skipped"):
+            print(f"  [{entry['status']}] {entry['sentence'][:90]}")
 
 
 if __name__ == "__main__":

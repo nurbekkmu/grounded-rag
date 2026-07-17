@@ -10,3 +10,6 @@ venv/
 .idea/
 __pycache__/
 *.pyc
+
+# graphify knowledge-graph tool output (local aid, not project code)
+graphify-out/

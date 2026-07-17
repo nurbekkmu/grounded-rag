@@ -11,7 +11,7 @@ guardrails.py; this module's audit is the first line.
 The response object carries a trace (per-stage candidates and ranks)
 so the observability layer can plug in later without refactoring.
 
-Usage:  python generate.py "your question"
+Usage:  python src/generate.py "your question"
             [--mode hybrid] [--top-n 75] [--keep 8]
             [--index data/index/baseline]
 Deps:   pip install google-genai python-dotenv pyyaml sentence-transformers
@@ -27,6 +27,7 @@ import sys
 import yaml
 from dotenv import load_dotenv
 
+from config import cfg as _cfg
 from contextualize import KeyRotator, genai_errors
 from rerank import rerank
 from retrieve import CHUNKS_DEFAULT, retrieve
@@ -34,9 +35,9 @@ from retrieve import CHUNKS_DEFAULT, retrieve
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 
-from config import cfg as _cfg
-
 PROMPT_FILE = _cfg("generation.prompt")
+
+# Matches citations like [book/ch06#014] but not [12] or [foo].
 CITE_RE = re.compile(r"\[([a-z0-9_/#.-]+#\d{3})\]")
 
 
@@ -45,84 +46,108 @@ def load_prompt(path=PROMPT_FILE):
         return yaml.safe_load(f)
 
 
-def chunks_block(candidates: list) -> str:
+def chunks_block(candidates):
+    """Format the shortlist as the prompt's evidence section.
+
+    Each chunk is labeled with its ID (which the model must cite) and
+    its human-readable source (section path plus pages or URL).
+    """
     parts = []
-    for c in candidates:
-        ch = c["chunk"]
-        where = (f"pp.{ch['page_start']}-{ch['page_end']}"
-                 if ch["source"] == "book" else ch["url"])
-        parts.append(f"[{ch['chunk_id']}] ({ch['section_path']} — {where})\n"
-                     f"{ch['text']}")
+    for candidate in candidates:
+        chunk = candidate["chunk"]
+        if chunk["source"] == "book":
+            where = f"pp.{chunk['page_start']}-{chunk['page_end']}"
+        else:
+            where = chunk["url"]
+        header = f"[{chunk['chunk_id']}] ({chunk['section_path']} — {where})"
+        parts.append(header + "\n" + chunk["text"])
     return "\n\n---\n\n".join(parts)
 
 
-def call_gemini(rotator: KeyRotator, cfg: dict, system: str, user: str) -> str:
-    n_keys = len(rotator.clients)
-    last_err = ""
-    for attempt in range(3 * n_keys):
+def call_gemini(rotator, prompt_cfg, system_text, user_text):
+    """One generation call, rotating across API keys on quota errors."""
+    total_attempts = 3 * len(rotator.clients)
+    last_error = ""
+    for attempt in range(total_attempts):
         try:
-            resp = rotator.client().models.generate_content(
-                model=cfg["model"],
-                contents=user,
+            response = rotator.client().models.generate_content(
+                model=prompt_cfg["model"],
+                contents=user_text,
                 config={
-                    "system_instruction": system,
-                    "temperature": cfg["temperature"],
-                    "max_output_tokens": cfg["max_output_tokens"],
+                    "system_instruction": system_text,
+                    "temperature": prompt_cfg["temperature"],
+                    "max_output_tokens": prompt_cfg["max_output_tokens"],
                     "thinking_config": {
-                        "thinking_budget": cfg.get("thinking_budget", 0)},
+                        "thinking_budget":
+                            prompt_cfg.get("thinking_budget", 0)},
                 },
             )
-            text = (resp.text or "").strip()
+            text = (response.text or "").strip()
             if text:
                 return text
-        except genai_errors.APIError as e:
-            if e.code not in (429, 500, 503):
+        except genai_errors.APIError as error:
+            retryable = error.code in (429, 500, 503)
+            if not retryable:
                 raise
-            last_err = str(e)[:400]
+            last_error = str(error)[:400]
         rotator.rotate()
-    raise RuntimeError(f"generation failed on all keys; last: {last_err}")
+    raise RuntimeError(f"generation failed on all keys; last: {last_error}")
 
 
-def answer(query: str, candidates: list, cfg: dict = None,
-           rotator: KeyRotator = None) -> dict:
-    cfg = cfg or load_prompt()
+def answer(query, candidates, prompt_cfg=None, rotator=None):
+    """Generate a cited answer from the shortlist and audit its citations."""
+    if prompt_cfg is None:
+        prompt_cfg = load_prompt()
     if rotator is None:
         load_dotenv()
-        rotator = KeyRotator([k.strip() for k in
-                              os.environ["GEMINI_API_KEYS"].split(",")
-                              if k.strip()])
-    user = (cfg["user_template"]
-            .replace("{{CHUNKS}}", chunks_block(candidates))
-            .replace("{{QUESTION}}", query))
-    text = call_gemini(rotator, cfg, cfg["system_prompt"], user)
+        keys = []
+        for key in os.environ["GEMINI_API_KEYS"].split(","):
+            if key.strip():
+                keys.append(key.strip())
+        rotator = KeyRotator(keys)
 
-    provided = {c["chunk_id"] for c in candidates}
-    cited = set(CITE_RE.findall(text))
+    user_text = (prompt_cfg["user_template"]
+                 .replace("{{CHUNKS}}", chunks_block(candidates))
+                 .replace("{{QUESTION}}", query))
+    answer_text = call_gemini(rotator, prompt_cfg,
+                              prompt_cfg["system_prompt"], user_text)
+
+    # Audit the citations: which provided chunks were actually cited,
+    # and did the model invent any IDs it was never given?
+    provided_ids = set()
+    for candidate in candidates:
+        provided_ids.add(candidate["chunk_id"])
+    cited_ids = set(CITE_RE.findall(answer_text))
+
+    trace_candidates = []
+    for candidate in candidates:
+        trace_candidates.append({
+            "chunk_id": candidate["chunk_id"],
+            "ranks": candidate["ranks"],
+            "rerank_score": candidate.get("rerank_score"),
+        })
+
     return {
-        "answer": text,
-        "refused": cfg["refusal"] in text,
-        "citations": sorted(cited & provided),
-        "fabricated_citations": sorted(cited - provided),
+        "answer": answer_text,
+        "refused": prompt_cfg["refusal"] in answer_text,
+        "citations": sorted(cited_ids & provided_ids),
+        "fabricated_citations": sorted(cited_ids - provided_ids),
         "trace": {
-            "prompt_version": cfg["version"],
-            "model": cfg["model"],
-            "candidates": [{"chunk_id": c["chunk_id"],
-                            "ranks": c["ranks"],
-                            "rerank_score": c.get("rerank_score")}
-                           for c in candidates],
+            "prompt_version": prompt_cfg["version"],
+            "model": prompt_cfg["model"],
+            "candidates": trace_candidates,
         },
     }
 
 
 def main():
-    from config import cfg as rcfg
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
     ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default=rcfg("retrieval.mode"))
-    ap.add_argument("--top-n", type=int, default=rcfg("retrieval.top_n"))
-    ap.add_argument("--keep", type=int, default=rcfg("rerank.keep"))
-    ap.add_argument("--index", default=rcfg("retrieval.index"))
+                    default=_cfg("retrieval.mode"))
+    ap.add_argument("--top-n", type=int, default=_cfg("retrieval.top_n"))
+    ap.add_argument("--keep", type=int, default=_cfg("rerank.keep"))
+    ap.add_argument("--index", default=_cfg("retrieval.index"))
     ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
     ap.add_argument("--json", action="store_true",
                     help="print the full response object")
@@ -135,16 +160,20 @@ def main():
     if a.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return
+
     print(result["answer"])
     print()
     if result["refused"]:
         print("(refused: insufficient evidence)")
+
     store = {c["chunk_id"]: c["chunk"] for c in shortlist}
-    for cid in result["citations"]:
-        ch = store[cid]
-        where = (f"pp.{ch['page_start']}-{ch['page_end']}"
-                 if ch["source"] == "book" else ch["url"])
-        print(f"  [{cid}]  {ch['section_path'][:60]}  ({where})")
+    for chunk_id in result["citations"]:
+        chunk = store[chunk_id]
+        if chunk["source"] == "book":
+            where = f"pp.{chunk['page_start']}-{chunk['page_end']}"
+        else:
+            where = chunk["url"]
+        print(f"  [{chunk_id}]  {chunk['section_path'][:60]}  ({where})")
     if result["fabricated_citations"]:
         print(f"  !! fabricated citation ids: "
               f"{result['fabricated_citations']}")

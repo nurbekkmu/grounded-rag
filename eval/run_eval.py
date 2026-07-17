@@ -40,66 +40,97 @@ K_EVAL = 20
 RECALL_KS = (5, 10, 20)
 
 
-def eval_question(q: dict, ranked_ids: list) -> dict:
-    evidence = set(q["evidence_chunk_ids"])
-    top = {k: ranked_ids[:k] for k in RECALL_KS}
-    found_at_20 = evidence.issubset(set(top[K_EVAL]))
-    first_hit = next((i + 1 for i, cid in enumerate(ranked_ids)
-                      if cid in evidence), None)
+def eval_question(question, ranked_ids):
+    """Score one golden question against a ranked chunk_id list."""
+    evidence = set(question["evidence_chunk_ids"])
+
+    # Did every evidence chunk make it into the top 20?
+    top_20 = set(ranked_ids[:K_EVAL])
+    all_evidence_found = evidence.issubset(top_20)
+
+    # recall@k: what fraction of the evidence is in the first k results?
+    recall = {}
+    for k in RECALL_KS:
+        top_k = set(ranked_ids[:k])
+        found = evidence & top_k
+        recall[k] = len(found) / len(evidence)
+
+    # Reciprocal rank: 1/position of the first evidence hit (0 if none).
+    reciprocal_rank = 0.0
+    for position, chunk_id in enumerate(ranked_ids, start=1):
+        if chunk_id in evidence:
+            reciprocal_rank = 1.0 / position
+            break
+
     return {
-        "qid": q["qid"],
-        "category": q["category"],
-        "failed_at_20": not found_at_20,
-        "recall": {k: len(evidence & set(top[k])) / len(evidence)
-                   for k in RECALL_KS},
-        "reciprocal_rank": 1.0 / first_hit if first_hit else 0.0,
+        "qid": question["qid"],
+        "category": question["category"],
+        "failed_at_20": not all_evidence_found,
+        "recall": recall,
+        "reciprocal_rank": reciprocal_rank,
     }
 
 
-def _agg(subset):
-    n = len(subset)
-    return {
-        "n": n,
-        "failure_rate@20": sum(r["failed_at_20"] for r in subset) / n,
-        **{f"recall@{k}": sum(r["recall"][k] for r in subset) / n
-           for k in RECALL_KS},
-        "mrr": sum(r["reciprocal_rank"] for r in subset) / n,
-    }
+def _agg(rows):
+    """Average the per-question results into one metrics row."""
+    n = len(rows)
+    metrics = {"n": n}
+    metrics["failure_rate@20"] = sum(r["failed_at_20"] for r in rows) / n
+    for k in RECALL_KS:
+        metrics[f"recall@{k}"] = sum(r["recall"][k] for r in rows) / n
+    metrics["mrr"] = sum(r["reciprocal_rank"] for r in rows) / n
+    return metrics
 
 
-def evaluate(golden_path: str, mode: str, use_rerank: bool,
-             top_n: int = 75, index_dir: str = "data/index/baseline",
-             chunks=None, split: str = None,
-             rerank_model: str = None) -> dict:
-    """Run retrieval metrics for one configuration. Importable — the
-    ablation harness drives this same function across the config matrix.
-    split="blog" restricts to blog-evidence questions (what CI can run:
-    the book never leaves the author's machine)."""
-    golden = [json.loads(l) for l in open(golden_path, encoding="utf-8")]
+def evaluate(golden_path, mode, use_rerank, top_n=75,
+             index_dir="data/index/baseline", chunks=None, split=None,
+             rerank_model=None):
+    """Run retrieval metrics for one configuration.
+
+    Importable — the ablation harness drives this same function across
+    the config matrix. split="blog" restricts to blog-evidence
+    questions (what CI can run: the book never leaves the author's
+    machine).
+    """
+    golden = []
+    with open(golden_path, encoding="utf-8") as f:
+        for line in f:
+            golden.append(json.loads(line))
+
+    # Refusal questions have no evidence chunks to find, so retrieval
+    # metrics skip them; they get their turn in the generation eval.
     questions = [q for q in golden if q["category"] != "refusal"]
     if split:
         questions = [q for q in questions if q["split"] == split]
     if not questions:
         raise SystemExit(f"no golden questions with split={split!r}")
+
     rows = []
-    for q in questions:
-        candidates = retrieve(q["question"], index_dir,
-                              chunks or CHUNKS_DEFAULT, mode, top_n, k=top_n)
+    for question in questions:
+        candidates = retrieve(question["question"], index_dir,
+                              chunks or CHUNKS_DEFAULT, mode,
+                              top_n, k=top_n)
         if use_rerank:
             from rerank import MODEL_DEFAULT, rerank
-            candidates = rerank(q["question"], candidates,
-                                rerank_model or MODEL_DEFAULT, keep=K_EVAL)
+            candidates = rerank(question["question"], candidates,
+                                rerank_model or MODEL_DEFAULT,
+                                keep=K_EVAL)
         ranked_ids = [c["chunk_id"] for c in candidates]
-        rows.append(eval_question(q, ranked_ids))
+        rows.append(eval_question(question, ranked_ids))
+
+    by_category = {}
+    for category in sorted({row["category"] for row in rows}):
+        matching = [row for row in rows if row["category"] == category]
+        by_category[category] = _agg(matching)
+
+    unverified = sum(1 for q in golden if not q.get("verified"))
     return {
         "config": {"mode": mode, "rerank": use_rerank, "top_n": top_n,
                    "index": index_dir},
         "overall": _agg(rows),
-        "by_category": {cat: _agg([r for r in rows
-                                   if r["category"] == cat])
-                        for cat in sorted({r["category"] for r in rows})},
+        "by_category": by_category,
         "rows": rows,
-        "unverified": sum(1 for q in golden if not q.get("verified")),
+        "unverified": unverified,
         "total_golden": len(golden),
     }
 

@@ -10,7 +10,7 @@ Blog chunks carry url + date instead of page numbers; chunk_id / doc_id /
 source / section_path fields match the book chunks so every downstream
 stage (contextualize, index, retrieve) sees one uniform schema.
 
-Usage:  python chunk_blog.py [docs.jsonl] [out.jsonl]
+Usage:  python src/chunk_blog.py [docs.jsonl] [out.jsonl]
 """
 
 import json
@@ -18,8 +18,7 @@ import os
 import re
 import sys
 
-from chunk_book import (MAX_TOKENS, MIN_TOKENS, OVERLAP_TOKENS,
-                        TARGET_TOKENS, n_tokens, split_oversize)
+from chunk_book import MIN_TOKENS, ParagraphPacker, n_tokens
 
 DOCS_DEFAULT = "data/processed/blog_docs.jsonl"
 OUT_DEFAULT = "data/processed/blog_chunks.jsonl"
@@ -27,152 +26,144 @@ OUT_DEFAULT = "data/processed/blog_chunks.jsonl"
 HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
 
 
-def blocks(md_text: str):
-    """Yield (heading, block_text) in reading order.
+def blocks(md_text):
+    """Split markdown into (heading, block) pairs in reading order.
 
-    A block is a paragraph (blank-line separated) or a whole fenced code
-    block. heading is the most recent markdown heading (None before the
-    first one).
+    A block is one paragraph (blank-line separated) or one whole fenced
+    code block. heading is the most recent markdown heading, or None
+    before the first one. Lines inside a code fence are never treated
+    as headings, even if they start with '#'.
     """
-    heading, buf, in_code, out = None, [], False, []
+    heading = None
+    current_lines = []
+    inside_code_fence = False
+    result = []
 
-    def flush():
-        nonlocal buf
-        t = "\n".join(buf).strip()
-        if t:
-            out.append((heading, t))
-        buf = []
+    def finish_block():
+        text = "\n".join(current_lines).strip()
+        if text:
+            result.append((heading, text))
+        current_lines.clear()
 
-    for ln in md_text.splitlines():
-        if ln.lstrip().startswith("```"):
-            if not in_code:
-                flush()                # prose before the fence ends here
-            buf.append(ln)
-            if in_code:
-                flush()                # closing fence ends the block
-            in_code = not in_code
+    for line in md_text.splitlines():
+        if line.lstrip().startswith("```"):
+            if not inside_code_fence:
+                finish_block()            # prose before the fence ends here
+            current_lines.append(line)
+            if inside_code_fence:
+                finish_block()            # the closing fence ends the block
+            inside_code_fence = not inside_code_fence
             continue
-        if in_code:
-            buf.append(ln)
+
+        if inside_code_fence:
+            current_lines.append(line)
             continue
-        m = HEADING_RE.match(ln)
-        if m:
-            flush()
-            heading = m.group(1).strip()
+
+        heading_match = HEADING_RE.match(line)
+        if heading_match:
+            finish_block()
+            heading = heading_match.group(1).strip()
             continue
-        if not ln.strip():
-            flush()
+
+        if not line.strip():
+            finish_block()
             continue
-        buf.append(ln)
-    flush()
-    return out
+
+        current_lines.append(line)
+
+    finish_block()
+    return result
 
 
-def chunk_doc(doc: dict) -> list:
-    """Pack one post's blocks into chunks; heading change = hard wall."""
-    chunks, buf, seq = [], [], 0
-    cur_head = None
+def chunk_doc(doc):
+    """Pack one post's blocks into chunks; a heading change is a hard wall."""
+    packer = ParagraphPacker()
+    current_heading = None
+    for heading, block in blocks(doc["text"]):
+        if heading != current_heading:
+            # Never let overlap leak across a heading boundary — the
+            # text on either side belongs to different topics.
+            packer.close_group(keep_overlap=False)
+            current_heading = heading
+        packer.add(heading, block)
+    packer.close_group(keep_overlap=False)
 
-    def section_path(head):
-        return f"{doc['title']} > {head}" if head else doc["title"]
-
-    def emit(text, head):
-        nonlocal seq
+    chunks = []
+    for seq, group in enumerate(packer.groups):
+        text = "\n\n".join(block for _, block in group)
+        heading = group[-1][0]
+        if heading:
+            section_path = f"{doc['title']} > {heading}"
+        else:
+            section_path = doc["title"]
         chunks.append({
             "chunk_id": f"{doc['doc_id']}#{seq:03d}",
             "doc_id": doc["doc_id"],
             "source": "blog",
             "title": doc["title"],
-            "section": head,
-            "section_path": section_path(head),
+            "section": heading,
+            "section_path": section_path,
             "url": doc["url"],
             "date": doc["date"],
             "n_tokens": n_tokens(text),
             "text": text,
         })
-        seq += 1
-
-    def flush(seed_overlap=True):
-        nonlocal buf
-        if not buf:
-            return
-        emit("\n\n".join(t for _, t in buf), buf[-1][0])
-        if not seed_overlap:
-            buf = []
-            return
-        keep, tok = [], 0
-        for item in reversed(buf):
-            t = n_tokens(item[1])
-            if keep and tok + t > OVERLAP_TOKENS:
-                break
-            if not keep and t > OVERLAP_TOKENS * 2:
-                break
-            keep.append(item)
-            tok += t
-        buf = list(reversed(keep))
-
-    for head, block in blocks(doc["text"]):
-        if head != cur_head:
-            flush(seed_overlap=False)   # never overlap across a heading
-            cur_head = head
-        pieces = (split_oversize(block)
-                  if n_tokens(block) > MAX_TOKENS else [block])
-        for piece in pieces:
-            cur = sum(n_tokens(t) for _, t in buf)
-            t = n_tokens(piece)
-            if buf and (cur + t > MAX_TOKENS
-                        or (cur + t > TARGET_TOKENS
-                            and cur >= TARGET_TOKENS // 2)):
-                flush()
-            buf.append((head, piece))
-    flush(seed_overlap=False)
     return merge_tiny(chunks, doc["doc_id"])
 
 
-def merge_tiny(chunks: list, doc_id: str) -> list:
+def merge_tiny(chunks, doc_id):
     """Merge chunks under MIN_TOKENS forward into the next chunk.
 
-    Blog sections are often a heading plus one short intro paragraph; that
-    intro belongs WITH the content that follows it, not alone. The final
-    chunk (no next) merges backward instead. IDs are renumbered after.
+    Blog sections are often a heading plus one short intro paragraph;
+    that intro belongs WITH the content that follows it, not alone. The
+    final chunk (no next) merges backward instead. IDs are renumbered
+    after merging.
     """
-    merged, pending = [], None
-    for c in chunks:
-        if pending:
-            c["text"] = pending["text"] + "\n\n" + c["text"]
-            c["n_tokens"] = n_tokens(c["text"])
+    merged = []
+    pending = None                 # a tiny chunk waiting to join the next one
+    for chunk in chunks:
+        if pending is not None:
+            chunk["text"] = pending["text"] + "\n\n" + chunk["text"]
+            chunk["n_tokens"] = n_tokens(chunk["text"])
             pending = None
-        if c["n_tokens"] < MIN_TOKENS:
-            pending = c
-            continue
-        merged.append(c)
-    if pending:
+        if chunk["n_tokens"] < MIN_TOKENS:
+            pending = chunk
+        else:
+            merged.append(chunk)
+
+    if pending is not None:
         if merged:
             merged[-1]["text"] += "\n\n" + pending["text"]
             merged[-1]["n_tokens"] = n_tokens(merged[-1]["text"])
         else:
-            merged.append(pending)      # whole post is tiny: keep as-is
-    for i, c in enumerate(merged):
-        c["chunk_id"] = f"{doc_id}#{i:03d}"
+            merged.append(pending)     # the whole post is tiny: keep as-is
+
+    for i, chunk in enumerate(merged):
+        chunk["chunk_id"] = f"{doc_id}#{i:03d}"
     return merged
 
 
 def main(docs_path=DOCS_DEFAULT, out_path=OUT_DEFAULT):
-    docs = [json.loads(line) for line in open(docs_path, encoding="utf-8")]
+    docs = []
+    with open(docs_path, encoding="utf-8") as f:
+        for line in f:
+            docs.append(json.loads(line))
+
     all_chunks = []
     for doc in docs:
         all_chunks.extend(chunk_doc(doc))
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
-        for c in all_chunks:
-            f.write(json.dumps(c, ensure_ascii=False) + "\n")
+        for chunk in all_chunks:
+            f.write(json.dumps(chunk, ensure_ascii=False) + "\n")
 
-    toks = [c["n_tokens"] for c in all_chunks]
-    big = sum(1 for t in toks if t > MAX_TOKENS)
+    token_counts = [chunk["n_tokens"] for chunk in all_chunks]
+    over_cap = sum(1 for count in token_counts if count > 800)
     print(f"chunks: {len(all_chunks)} from {len(docs)} posts  |  "
-          f"tokens min/avg/max: {min(toks)}/{sum(toks)//len(toks)}/{max(toks)}"
-          f"  |  >{MAX_TOKENS}: {big}")
+          f"tokens min/avg/max: {min(token_counts)}"
+          f"/{sum(token_counts) // len(token_counts)}/{max(token_counts)}"
+          f"  |  >800: {over_cap}")
     print(f"wrote {out_path}")
 
 

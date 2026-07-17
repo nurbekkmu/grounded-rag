@@ -10,8 +10,8 @@ Strategy:
   5. Emit JSONL with metadata (chapter / section / subsection / pages) ready for
      contextual retrieval (Gemini) + Weaviate ingestion.
 
-Usage:  python chunk_book.py <book.pdf> <out.jsonl>
-Deps:   pip install pymupdf
+Usage:  python src/chunk_book.py <book.pdf> <out.jsonl>
+Deps:   pip install pymupdf tiktoken
 """
 
 import json
@@ -36,136 +36,258 @@ SKIP_TOP_TITLES = {"Cover", "Copyright", "Table of Contents", "Index",
 FOOTER_RE = re.compile(r"^\s*\d+\s*\n?\s*\|\s*\n?.*$|^.*\|\s*\n?\s*\d+\s*$",
                        re.DOTALL)
 
-
 _ENC = tiktoken.get_encoding("o200k_base")
 
 
 @lru_cache(maxsize=None)
-def n_tokens(text: str) -> int:
+def n_tokens(text):
     """Token count with the project's one measuring ruler (tiktoken o200k)."""
     return len(_ENC.encode(text))
 
 
-def doc_id_for(chapter: str) -> str:
+def doc_id_for(chapter):
     """'Chapter 6. RAG and Agents' -> 'book/ch06'; 'Preface' -> 'book/preface'."""
-    m = re.match(r"^Chapter (\d+)\b", chapter)
-    if m:
-        return f"book/ch{int(m.group(1)):02d}"
-    return "book/" + re.sub(r"[^a-z0-9]+", "-", chapter.lower()).strip("-")
+    match = re.match(r"^Chapter (\d+)\b", chapter)
+    if match:
+        number = int(match.group(1))
+        return f"book/ch{number:02d}"
+    slug = re.sub(r"[^a-z0-9]+", "-", chapter.lower()).strip("-")
+    return "book/" + slug
 
 
-def clean_block(text: str) -> str:
+def clean_block(text):
+    """Normalize one PDF text block: fix hyphenation and whitespace."""
     text = unicodedata.normalize("NFKC", text)
-    # de-hyphenate: soft hyphen (U+2010) or '-' at line end joins the word
-    text = re.sub(r"[\u2010\u00ad-]\n(?=[A-Za-z])", "", text)
-    text = text.replace("\u2010", "-")  # normalize remaining unicode hyphens
+    # A word split across lines ends in a hyphen; joining the lines
+    # rejoins the word ("retrie-\nval" -> "retrieval").
+    text = re.sub(r"[‐­-]\n(?=[A-Za-z])", "", text)
+    text = text.replace("‐", "-")
     text = text.replace("\n", " ")
     return re.sub(r"\s+", " ", text).strip()
 
 
 def load_sections(doc):
-    """TOC -> ordered leaf sections with hierarchy + start page."""
-    toc = doc.get_toc()
-    sections, ch, sec = [], None, None
-    for level, title, page in toc:
+    """Turn the PDF's table of contents into an ordered list of sections.
+
+    Each entry keeps its chapter / section / subsection names and the
+    page it starts on. Front/back matter (cover, index, ...) is skipped.
+    """
+    sections = []
+    chapter = None
+    section = None
+    for level, title, page in doc.get_toc():
         title = title.strip()
         if level == 1:
             if title in SKIP_TOP_TITLES:
-                ch = None
+                chapter = None
                 continue
-            ch, sec = title, None
-            sections.append({"chapter": ch, "section": None,
-                             "subsection": None, "page": page, "title": title})
-        elif ch and level == 2:
-            sec = title
-            sections.append({"chapter": ch, "section": sec,
-                             "subsection": None, "page": page, "title": title})
-        elif ch and level == 3:
-            sections.append({"chapter": ch, "section": sec,
-                             "subsection": title, "page": page, "title": title})
+            chapter = title
+            section = None
+            sections.append({"chapter": chapter, "section": None,
+                             "subsection": None, "page": page,
+                             "title": title})
+        elif chapter and level == 2:
+            section = title
+            sections.append({"chapter": chapter, "section": section,
+                             "subsection": None, "page": page,
+                             "title": title})
+        elif chapter and level == 3:
+            sections.append({"chapter": chapter, "section": section,
+                             "subsection": title, "page": page,
+                             "title": title})
     return sections
 
 
-def heading_y(page, title: str):
-    """y-coordinate of a section heading on its start page (None if not found)."""
+def heading_y(page, title):
+    """Vertical position of a section heading on its first page.
+
+    Used to know where one section ends and the next begins when both
+    share a page. Returns None when the heading text can't be found.
+    """
     needle = title[:40].strip()
     hits = page.search_for(needle)
-    return min(h.y0 for h in hits) if hits else None
+    if not hits:
+        return None
+    return min(hit.y0 for hit in hits)
 
 
 def page_blocks(page):
-    """Content blocks of a page: (y0, text), footers dropped, reading order."""
-    out = []
+    """Content blocks of one page in reading order, with footers dropped."""
+    blocks = []
     for x0, y0, x1, y1, text, *_ in page.get_text("blocks"):
         if not text.strip():
             continue
         if y0 > FOOTER_Y and FOOTER_RE.match(text.strip()):
             continue
-        out.append((y0, text))
-    out.sort(key=lambda b: b[0])
-    return out
+        blocks.append((y0, text))
+    blocks.sort(key=lambda block: block[0])
+    return blocks
 
 
 def collect_section_paragraphs(doc, sections, last_page):
-    """Assign cleaned paragraphs to each leaf section using page + y bounds."""
+    """Assign each cleaned paragraph to the section it belongs to.
+
+    A section spans from its heading (page + y position) up to the next
+    section's heading. Everything between those two points is this
+    section's text.
+    """
+    # First work out where each section starts and ends.
     bounds = []
     for i, s in enumerate(sections):
-        start_p = s["page"]
-        y0 = heading_y(doc[start_p - 1], s["title"])
+        start_page = s["page"]
+        start_y = heading_y(doc[start_page - 1], s["title"])
         if i + 1 < len(sections):
-            nxt = sections[i + 1]
-            end_p = nxt["page"]
-            y_end = heading_y(doc[end_p - 1], nxt["title"])
+            next_section = sections[i + 1]
+            end_page = next_section["page"]
+            end_y = heading_y(doc[end_page - 1], next_section["title"])
         else:
-            end_p, y_end = last_page, None
-        bounds.append((s, start_p, y0, end_p, y_end))
+            end_page = last_page
+            end_y = None
+        bounds.append((s, start_page, start_y, end_page, end_y))
 
-    for s, start_p, y0, end_p, y_end in bounds:
-        paras = []
-        for pno in range(start_p, end_p + 1):
-            for y, text in page_blocks(doc[pno - 1]):
-                if pno == start_p and y0 is not None and y < y0:
-                    continue                      # before this heading
-                if pno == end_p and y_end is not None and y >= y_end:
-                    continue                      # next section started
-                t = clean_block(text)
-                if not t or t == s["title"] or re.match(r"^CHAPTER \d+\b", t):
+    # Then walk each section's pages and keep the paragraphs inside it.
+    for s, start_page, start_y, end_page, end_y in bounds:
+        paragraphs = []
+        for page_number in range(start_page, end_page + 1):
+            for y, text in page_blocks(doc[page_number - 1]):
+                before_this_section = (page_number == start_page
+                                       and start_y is not None
+                                       and y < start_y)
+                if before_this_section:
                     continue
-                # word split across blocks: previous para ends mid-word
-                if paras and paras[-1][1].endswith(("-", "\u2010")) \
-                        and t[:1].isalpha():
-                    ppno, prev = paras[-1]
-                    paras[-1] = (ppno, prev[:-1] + t)
+                next_section_started = (page_number == end_page
+                                        and end_y is not None
+                                        and y >= end_y)
+                if next_section_started:
+                    continue
+                cleaned = clean_block(text)
+                if not cleaned:
+                    continue
+                if cleaned == s["title"]:
+                    continue
+                if re.match(r"^CHAPTER \d+\b", cleaned):
+                    continue
+                # If the previous paragraph ended mid-word (trailing
+                # hyphen), glue this one onto it instead of starting new.
+                ends_mid_word = (paragraphs
+                                 and paragraphs[-1][1].endswith(("-", "‐"))
+                                 and cleaned[:1].isalpha())
+                if ends_mid_word:
+                    prev_page, prev_text = paragraphs[-1]
+                    paragraphs[-1] = (prev_page, prev_text[:-1] + cleaned)
                 else:
-                    paras.append((pno, t))
-        s["paras"], s["page_end"] = paras, end_p
+                    paragraphs.append((page_number, cleaned))
+        s["paras"] = paragraphs
+        s["page_end"] = end_page
     return sections
 
 
-def split_oversize(text: str):
+def split_oversize(text):
     """Sentence-split a paragraph that alone exceeds MAX_TOKENS."""
-    sents = re.split(r"(?<=[.!?])\s+", text)
-    out, cur = [], ""
-    for sent in sents:
-        if cur and n_tokens(cur + " " + sent) > MAX_TOKENS:
-            out.append(cur)
-            cur = sent
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    pieces = []
+    current = ""
+    for sentence in sentences:
+        if current and n_tokens(current + " " + sentence) > MAX_TOKENS:
+            pieces.append(current)
+            current = sentence
         else:
-            cur = f"{cur} {sent}".strip()
-    if cur:
-        out.append(cur)
-    return out
+            current = f"{current} {sentence}".strip()
+    if current:
+        pieces.append(current)
+    return pieces
 
 
-def chunk_section(s, seq_start: int):
-    """Pack paragraphs into chunks; paragraph-level overlap; never split blocks."""
+class ParagraphPacker:
+    """Packs (marker, paragraph) pairs into chunk-sized groups.
+
+    The marker travels with each paragraph and can be anything the
+    caller wants to remember — the book chunker uses page numbers, the
+    blog chunker uses section headings.
+
+    Paragraphs are added in reading order into a buffer. When adding
+    the next paragraph would push the buffer past the limits, the
+    buffer is closed into a finished group first. A small tail of the
+    closed group (~OVERLAP_TOKENS) stays in the buffer so an idea that
+    spans the boundary appears intact in at least one chunk.
+    """
+
+    def __init__(self):
+        self.groups = []   # finished groups: each is a list of (marker, text)
+        self.buffer = []   # paragraphs waiting to be packed
+
+    def add(self, marker, paragraph):
+        if n_tokens(paragraph) > MAX_TOKENS:
+            pieces = split_oversize(paragraph)
+        else:
+            pieces = [paragraph]
+        for piece in pieces:
+            if self._would_overflow(piece):
+                self.close_group(keep_overlap=True)
+            self.buffer.append((marker, piece))
+
+    def _would_overflow(self, piece):
+        """Would adding this piece make the buffer too big to keep open?"""
+        if not self.buffer:
+            return False
+        current = sum(n_tokens(text) for _, text in self.buffer)
+        combined = current + n_tokens(piece)
+        if combined > MAX_TOKENS:
+            return True
+        past_target = combined > TARGET_TOKENS
+        big_enough_to_close = current >= TARGET_TOKENS // 2
+        return past_target and big_enough_to_close
+
+    def close_group(self, keep_overlap):
+        """Move the buffer into a finished group.
+
+        With keep_overlap=True the last ~OVERLAP_TOKENS worth of
+        paragraphs stays in the buffer as the start of the next group.
+        """
+        if not self.buffer:
+            return
+        self.groups.append(list(self.buffer))
+        if keep_overlap:
+            self.buffer = self._overlap_tail()
+        else:
+            self.buffer = []
+
+    def _overlap_tail(self):
+        """The trailing paragraphs worth carrying into the next group.
+
+        Walk backwards collecting paragraphs until the overlap budget
+        is spent. A lone paragraph bigger than twice the budget is not
+        carried at all — duplicating a huge block isn't overlap.
+        """
+        tail = []
+        tokens_kept = 0
+        for marker, text in reversed(self.buffer):
+            tokens = n_tokens(text)
+            if tail and tokens_kept + tokens > OVERLAP_TOKENS:
+                break
+            if not tail and tokens > OVERLAP_TOKENS * 2:
+                break
+            tail.append((marker, text))
+            tokens_kept += tokens
+        tail.reverse()
+        return tail
+
+
+def chunk_section(s, seq_start):
+    """Pack one section's paragraphs into finished chunk records."""
+    packer = ParagraphPacker()
+    for page, paragraph in s["paras"]:
+        packer.add(page, paragraph)
+    packer.close_group(keep_overlap=False)
+
     doc_id = doc_id_for(s["chapter"])
-    section_path = " > ".join(
-        x for x in (s["chapter"], s["section"], s["subsection"]) if x)
-    chunks, buf, seq = [], [], seq_start
+    name_parts = [s["chapter"], s["section"], s["subsection"]]
+    section_path = " > ".join(part for part in name_parts if part)
 
-    def emit(text, page_a, page_b):
-        nonlocal seq
+    chunks = []
+    seq = seq_start
+    for group in packer.groups:
+        text = "\n\n".join(paragraph for _, paragraph in group)
         chunks.append({
             "chunk_id": f"{doc_id}#{seq:03d}",
             "doc_id": doc_id,
@@ -174,47 +296,14 @@ def chunk_section(s, seq_start: int):
             "section": s["section"],
             "subsection": s["subsection"],
             "section_path": section_path,
-            "page_start": page_a,
-            "page_end": page_b,
+            "page_start": group[0][0],
+            "page_end": group[-1][0],
             "n_tokens": n_tokens(text),
             "text": text,
         })
         seq += 1
 
-    def flush(seed_overlap=True):
-        nonlocal buf
-        if not buf:
-            return
-        emit("\n\n".join(p for _, p in buf), buf[0][0], buf[-1][0])
-        if not seed_overlap:
-            buf = []
-            return
-        # paragraph overlap: trailing paras up to OVERLAP_TOKENS; a lone
-        # paragraph over 2x the budget is skipped (don't duplicate big blocks)
-        keep, tok = [], 0
-        for item in reversed(buf):
-            t = n_tokens(item[1])
-            if keep and tok + t > OVERLAP_TOKENS:
-                break
-            if not keep and t > OVERLAP_TOKENS * 2:
-                break
-            keep.append(item)
-            tok += t
-        buf = list(reversed(keep))
-
-    for pno, para in s["paras"]:
-        pieces = split_oversize(para) if n_tokens(para) > MAX_TOKENS else [para]
-        for piece in pieces:
-            cur = sum(n_tokens(p) for _, p in buf)
-            t = n_tokens(piece)
-            if buf and (cur + t > MAX_TOKENS
-                        or (cur + t > TARGET_TOKENS
-                            and cur >= TARGET_TOKENS // 2)):
-                flush()
-            buf.append((pno, piece))
-    flush(seed_overlap=False)
-
-    # a tiny tail chunk carries too little to stand alone: merge it back
+    # A tiny tail chunk carries too little to stand alone: merge it back.
     if len(chunks) >= 2 and chunks[-1]["n_tokens"] < MIN_TOKENS:
         tail = chunks.pop()
         chunks[-1]["text"] += "\n\n" + tail["text"]
@@ -223,31 +312,38 @@ def chunk_section(s, seq_start: int):
     return chunks, seq
 
 
-def main(pdf_path: str, out_path: str):
+def main(pdf_path, out_path):
     doc = fitz.open(pdf_path)
     sections = load_sections(doc)
-    # last content page = page before Index (or doc end)
-    idx = next((p for lv, t, p in doc.get_toc()
-                if lv == 1 and t.strip() == "Index"), doc.page_count + 1)
-    sections = collect_section_paragraphs(doc, sections, idx - 1)
 
-    all_chunks, seqs = [], {}
+    # The last content page is the one right before the Index.
+    index_page = doc.page_count + 1
+    for level, title, page in doc.get_toc():
+        if level == 1 and title.strip() == "Index":
+            index_page = page
+            break
+    sections = collect_section_paragraphs(doc, sections, index_page - 1)
+
+    all_chunks = []
+    seq_per_doc = {}
     for s in sections:
         if not s["paras"]:
             continue
-        did = doc_id_for(s["chapter"])
-        chunks, seqs[did] = chunk_section(s, seqs.get(did, 0))
+        doc_id = doc_id_for(s["chapter"])
+        start = seq_per_doc.get(doc_id, 0)
+        chunks, seq_per_doc[doc_id] = chunk_section(s, start)
         all_chunks.extend(chunks)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
-        for c in all_chunks:
-            f.write(json.dumps(c, ensure_ascii=False) + "\n")
+        for chunk in all_chunks:
+            f.write(json.dumps(chunk, ensure_ascii=False) + "\n")
 
-    toks = [c["n_tokens"] for c in all_chunks]
-    big = sum(1 for t in toks if t > MAX_TOKENS)
+    token_counts = [chunk["n_tokens"] for chunk in all_chunks]
+    over_cap = sum(1 for count in token_counts if count > MAX_TOKENS)
     print(f"chunks: {len(all_chunks)}  |  tokens min/avg/max: "
-          f"{min(toks)}/{sum(toks)//len(toks)}/{max(toks)}  |  >{MAX_TOKENS}: {big}")
+          f"{min(token_counts)}/{sum(token_counts) // len(token_counts)}"
+          f"/{max(token_counts)}  |  >{MAX_TOKENS}: {over_cap}")
     print(f"wrote {out_path}")
 
 
