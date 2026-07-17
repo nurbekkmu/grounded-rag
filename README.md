@@ -6,7 +6,7 @@
 ![model cost](https://img.shields.io/badge/model_cost-%240-brightgreen)
 
 A question-answering system over Chip Huyen's *AI Engineering* book and
-her blog that refuses to say anything it can't prove. Every claim in an
+her blog. Every claim in an
 answer cites the exact source passage, an entailment model re-checks
 every sentence after generation, and when the evidence isn't there, the
 system says so instead of improvising.
