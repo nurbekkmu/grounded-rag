@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(
 from generate import answer, load_prompt  # noqa: E402
 from guardrails import NliVerifier, verify  # noqa: E402
 from rerank import rerank  # noqa: E402
-from retrieve import CHUNKS_DEFAULT, retrieve  # noqa: E402
+from retrieve import retrieve  # noqa: E402
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -47,16 +47,12 @@ def faithfulness(audit: dict) -> float:
 
 
 def main():
+    from retrieve import add_retrieval_args
     ap = argparse.ArgumentParser()
     ap.add_argument("--golden", default="eval/golden_set.jsonl")
-    ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default="hybrid")
-    ap.add_argument("--top-n", type=int, default=75)
-    ap.add_argument("--keep", type=int, default=8)
     ap.add_argument("--split", choices=["book", "blog", "mixed"])
-    ap.add_argument("--index", default="data/index/baseline")
-    ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
     ap.add_argument("--json-out")
+    add_retrieval_args(ap, keep=True)
     a = ap.parse_args()
 
     golden = [json.loads(l) for l in open(a.golden, encoding="utf-8")]

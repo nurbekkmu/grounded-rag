@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 from config import cfg as _cfg
 from contextualize import KeyRotator, genai_errors
 from rerank import rerank
-from retrieve import CHUNKS_DEFAULT, retrieve
+from retrieve import add_retrieval_args, retrieve, source_of
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -55,11 +55,8 @@ def chunks_block(candidates):
     parts = []
     for candidate in candidates:
         chunk = candidate["chunk"]
-        if chunk["source"] == "book":
-            where = f"pp.{chunk['page_start']}-{chunk['page_end']}"
-        else:
-            where = chunk["url"]
-        header = f"[{chunk['chunk_id']}] ({chunk['section_path']} — {where})"
+        header = (f"[{chunk['chunk_id']}] "
+                  f"({chunk['section_path']} — {source_of(chunk)})")
         parts.append(header + "\n" + chunk["text"])
     return "\n\n---\n\n".join(parts)
 
@@ -143,14 +140,9 @@ def answer(query, candidates, prompt_cfg=None, rotator=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
-    ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default=_cfg("retrieval.mode"))
-    ap.add_argument("--top-n", type=int, default=_cfg("retrieval.top_n"))
-    ap.add_argument("--keep", type=int, default=_cfg("rerank.keep"))
-    ap.add_argument("--index", default=_cfg("retrieval.index"))
-    ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
     ap.add_argument("--json", action="store_true",
                     help="print the full response object")
+    add_retrieval_args(ap, keep=True)
     a = ap.parse_args()
 
     net = retrieve(a.query, a.index, a.chunks, a.mode, a.top_n, k=a.top_n)
@@ -169,11 +161,8 @@ def main():
     store = {c["chunk_id"]: c["chunk"] for c in shortlist}
     for chunk_id in result["citations"]:
         chunk = store[chunk_id]
-        if chunk["source"] == "book":
-            where = f"pp.{chunk['page_start']}-{chunk['page_end']}"
-        else:
-            where = chunk["url"]
-        print(f"  [{chunk_id}]  {chunk['section_path'][:60]}  ({where})")
+        print(f"  [{chunk_id}]  {chunk['section_path'][:60]}  "
+              f"({source_of(chunk)})")
     if result["fabricated_citations"]:
         print(f"  !! fabricated citation ids: "
               f"{result['fabricated_citations']}")

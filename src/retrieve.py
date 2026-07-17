@@ -39,6 +39,31 @@ CHUNKS_DEFAULT = ["data/processed/book_chunks.jsonl",
                   "data/processed/blog_chunks.jsonl"]
 
 
+def source_of(chunk):
+    """Human-readable source of a chunk: book pages or blog URL."""
+    if chunk["source"] == "book":
+        return f"pp.{chunk['page_start']}-{chunk['page_end']}"
+    return chunk["url"]
+
+
+def add_retrieval_args(parser, keep=False):
+    """The CLI flags every retrieval-driven script shares.
+
+    config.yaml supplies the defaults; a flag on the command line
+    still overrides. keep=True adds --keep for scripts that rerank.
+    """
+    from config import cfg
+    parser.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
+                        default=cfg("retrieval.mode"))
+    parser.add_argument("--top-n", type=int,
+                        default=cfg("retrieval.top_n"))
+    if keep:
+        parser.add_argument("--keep", type=int,
+                            default=cfg("rerank.keep"))
+    parser.add_argument("--index", default=cfg("retrieval.index"))
+    parser.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
+
+
 def load_chunks(paths):
     """Read chunk files and return a dict: chunk_id -> full chunk record."""
     store = {}
@@ -142,29 +167,20 @@ def retrieve(query, index_dir, chunk_paths=None,
 
 
 def main():
-    from config import cfg
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
-    ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default=cfg("retrieval.mode"))
-    ap.add_argument("--top-n", type=int, default=cfg("retrieval.top_n"))
     ap.add_argument("--k", type=int, default=10)
-    ap.add_argument("--index", default=cfg("retrieval.index"))
-    ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
+    add_retrieval_args(ap)
     a = ap.parse_args()
 
     results = retrieve(a.query, a.index, a.chunks, a.mode, a.top_n, a.k)
     for r in results:
         chunk = r["chunk"]
-        if chunk["source"] == "book":
-            where = f"pp.{chunk['page_start']}-{chunk['page_end']}"
-        else:
-            where = chunk["url"]
         ranks = ", ".join(f"{arm}#{rank}"
                           for arm, rank in r["ranks"].items())
         snippet = chunk["text"][:140].replace("\n", " ")
         print(f"{r['score']:.4f}  {r['chunk_id']:32s} [{ranks}]")
-        print(f"        {chunk['section_path'][:70]}  ({where})")
+        print(f"        {chunk['section_path'][:70]}  ({source_of(chunk)})")
         print(f"        {snippet}")
         print()
 

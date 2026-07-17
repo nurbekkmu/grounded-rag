@@ -36,7 +36,7 @@ from sentence_transformers import CrossEncoder
 
 from generate import CITE_RE, answer, load_prompt
 from rerank import rerank
-from retrieve import CHUNKS_DEFAULT, retrieve
+from retrieve import add_retrieval_args, retrieve
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -209,14 +209,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("query", nargs="?")
     ap.add_argument("--selftest", action="store_true")
-    ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default=rcfg("retrieval.mode"))
-    ap.add_argument("--top-n", type=int, default=rcfg("retrieval.top_n"))
-    ap.add_argument("--keep", type=int, default=rcfg("rerank.keep"))
     ap.add_argument("--min-rerank", type=float,
                     default=rcfg("guardrails.min_rerank"))
-    ap.add_argument("--index", default=rcfg("retrieval.index"))
-    ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
+    add_retrieval_args(ap, keep=True)
     a = ap.parse_args()
 
     if a.selftest:

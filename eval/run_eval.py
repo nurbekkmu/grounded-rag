@@ -136,22 +136,19 @@ def evaluate(golden_path, mode, use_rerank, top_n=75,
 
 
 def main():
+    from retrieve import add_retrieval_args
     ap = argparse.ArgumentParser()
     ap.add_argument("--golden", default="eval/golden_set.jsonl")
-    ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default="hybrid")
     ap.add_argument("--rerank", action="store_true",
                     help="apply the cross-encoder before measuring")
     ap.add_argument("--rerank-model",
                     help="override the cross-encoder (default MiniLM)")
-    ap.add_argument("--top-n", type=int, default=75)
-    ap.add_argument("--index", default="data/index/baseline")
-    ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
     ap.add_argument("--split", choices=["book", "blog", "mixed"],
                     help="restrict to one evidence split (CI uses blog)")
     ap.add_argument("--max-failure", type=float,
                     help="CI gate: exit 1 if failure-rate@20 exceeds this")
     ap.add_argument("--json-out")
+    add_retrieval_args(ap)
     a = ap.parse_args()
 
     result = evaluate(a.golden, a.mode, a.rerank, a.top_n, a.index,

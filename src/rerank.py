@@ -31,7 +31,7 @@ import sys
 from sentence_transformers import CrossEncoder
 
 from config import cfg as _cfg
-from retrieve import CHUNKS_DEFAULT, retrieve
+from retrieve import add_retrieval_args, retrieve, source_of
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -76,13 +76,8 @@ def rerank(query, candidates, model_name=MODEL_DEFAULT, keep=8):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
-    ap.add_argument("--mode", choices=["vector", "bm25", "hybrid"],
-                    default=_cfg("retrieval.mode"))
-    ap.add_argument("--top-n", type=int, default=_cfg("retrieval.top_n"))
-    ap.add_argument("--keep", type=int, default=_cfg("rerank.keep"))
     ap.add_argument("--model", default=MODEL_DEFAULT)
-    ap.add_argument("--index", default=_cfg("retrieval.index"))
-    ap.add_argument("--chunks", nargs="+", default=CHUNKS_DEFAULT)
+    add_retrieval_args(ap, keep=True)
     a = ap.parse_args()
 
     # The reranker needs the whole net, so retrieval keeps all top-n.
@@ -92,16 +87,12 @@ def main():
 
     for r in results:
         chunk = r["chunk"]
-        if chunk["source"] == "book":
-            where = f"pp.{chunk['page_start']}-{chunk['page_end']}"
-        else:
-            where = chunk["url"]
         fused = ", ".join(f"{arm}#{rank}"
                           for arm, rank in r["ranks"].items())
         snippet = chunk["text"][:140].replace("\n", " ")
         print(f"#{r['rerank_rank']}  ce={r['rerank_score']:6.2f}  "
               f"(was {fused})  {r['chunk_id']}")
-        print(f"     {chunk['section_path'][:70]}  ({where})")
+        print(f"     {chunk['section_path'][:70]}  ({source_of(chunk)})")
         print(f"     {snippet}")
         print()
 
