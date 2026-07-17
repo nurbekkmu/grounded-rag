@@ -1,0 +1,147 @@
+{
+  "summary": {
+    "n": 19,
+    "refusal_recall": 1.0,
+    "false_refusal_rate": 0.2,
+    "faithfulness": 0.8165584415584416,
+    "fabricated_citations": 0,
+    "config": {
+      "mode": "hybrid",
+      "keep": 8,
+      "prompt_version": 3,
+      "model": "gemini-2.5-flash"
+    }
+  },
+  "rows": [
+    {
+      "qid": "q001",
+      "category": "factual",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 1.0
+    },
+    {
+      "qid": "q002",
+      "category": "factual",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 0.7272727272727273
+    },
+    {
+      "qid": "q003",
+      "category": "factual",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 1.0
+    },
+    {
+      "qid": "q004",
+      "category": "factual",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 1.0
+    },
+    {
+      "qid": "q005",
+      "category": "exact-term",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 1.0
+    },
+    {
+      "qid": "q006",
+      "category": "exact-term",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 1.0
+    },
+    {
+      "qid": "q007",
+      "category": "exact-term",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 1.0
+    },
+    {
+      "qid": "q008",
+      "category": "multi-hop",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 0.5
+    },
+    {
+      "qid": "q009",
+      "category": "multi-hop",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 0.8333333333333334
+    },
+    {
+      "qid": "q010",
+      "category": "refusal",
+      "refused": true,
+      "fabricated": 0,
+      "correct_refusal": true
+    },
+    {
+      "qid": "q011",
+      "category": "refusal",
+      "refused": true,
+      "fabricated": 0,
+      "correct_refusal": true
+    },
+    {
+      "qid": "q012",
+      "category": "paraphrase",
+      "refused": true,
+      "fabricated": 0
+    },
+    {
+      "qid": "q013",
+      "category": "paraphrase",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 0.16666666666666666
+    },
+    {
+      "qid": "q014",
+      "category": "paraphrase",
+      "refused": true,
+      "fabricated": 0
+    },
+    {
+      "qid": "q015",
+      "category": "exact-term",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 1.0
+    },
+    {
+      "qid": "q016",
+      "category": "exact-term",
+      "refused": false,
+      "fabricated": 0,
+      "faithfulness": 0.5714285714285714
+    },
+    {
+      "qid": "q017",
+      "category": "multi-hop",
+      "refused": true,
+      "fabricated": 0
+    },
+    {
+      "qid": "q018",
+      "category": "refusal",
+      "refused": true,
+      "fabricated": 0,
+      "correct_refusal": true
+    },
+    {
+      "qid": "q019",
+      "category": "refusal",
+      "refused": true,
+      "fabricated": 0,
+      "correct_refusal": true
+    }
+  ]
+}

@@ -157,19 +157,31 @@ and now there's a number attached to that decision instead of a vibe.
 
 ### Generation
 
-Across the full golden set: every refusal trap refused, one false
-refusal (the footnote canary — refusing there is the designed
-behavior), and **zero fabricated citations across every answer this
-system has ever produced**. The model has never once cited a chunk it
-wasn't given.
+Across the full golden set: every refusal trap refused, and **zero
+fabricated citations across every answer this system has ever
+produced**. The model has never once cited a chunk it wasn't given.
 
 Faithfulness — the fraction of answer sentences the NLI verifier can
-entail from their cited chunks — averages 0.76, with the misses
+entail from their cited chunks — is 0.82, with the remaining misses
 concentrated on multi-hop answers that synthesize across two chunks.
-Sentence-level NLI judges cross-chunk synthesis conservatively, so that
-number is part verifier strictness, part genuinely loose claims. It's
-below the 0.85 I'd want to gate on, and it's the first thing on the
-improvement list.
+Sentence-level NLI judges cross-chunk synthesis conservatively, so
+that number is part verifier strictness, part genuinely loose claims.
+Still shy of the 0.85 I'd gate on; multi-premise verification is the
+top roadmap item. False refusals sit at one to three of fifteen
+depending on the run — one is the footnote canary, where refusing is
+the designed behavior, and the others flip with the approximate
+index's run-to-run variance. At n=15, one question moves any of these
+numbers by about seven points; read them at that resolution.
+
+One more experiment, because the corpus author writes more clearly
+than a paraphrase of her does: prompt v3 makes the system answer in
+the source's own words — verbatim quotes, trimmed to the relevant
+sentences, cited. I predicted this would raise faithfulness, since a
+verbatim quote is the easiest thing an NLI model can entail. Measured:
+a statistical tie (0.8166 vs 0.8161). The prediction was wrong — the
+verifier already entailed the quotable sentences; the misses live in
+the connective tissue between quotes. The feature stays anyway. Its
+point was never the metric.
 
 ### Latency, measured not guessed
 

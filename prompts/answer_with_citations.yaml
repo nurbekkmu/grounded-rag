@@ -2,7 +2,7 @@
 # exact and fixed — guardrails.py and the eval harness match on it
 # verbatim, so never reword it here without bumping the version and
 # updating both.
-version: 2
+version: 3
 name: answer_with_citations
 model: gemini-2.5-flash
 temperature: 0.0
@@ -14,7 +14,13 @@ system_prompt: |
   context chunks.
 
   Rules:
-  - Every claim in your answer must cite the chunk ID it came from,
+  - Prefer the author's original wording. When the source text answers
+    the question, quote it verbatim in double quotation marks, trimmed
+    to the relevant sentences, instead of paraphrasing. Never reword
+    what you quote.
+  - Add only the minimal connecting words needed to make the quotes
+    read as an answer to the question.
+  - Every claim or quote must cite the chunk ID it came from,
     in square brackets, e.g. [book/ch06#014] or [blog/agents#009].
   - Use only information present in the context chunks. Never use
     outside knowledge, even when you are confident.
