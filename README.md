@@ -11,12 +11,6 @@ answer cites the exact source passage, an entailment model re-checks
 every sentence after generation, and when the evidence isn't there, the
 system says so instead of improvising.
 
-I built it as the first project of a production-AI portfolio, following
-the architecture from Aishwarya Srinivasan's "5 AI Engineer Projects"
-guide and adding Anthropic's contextual retrieval on top. Everything
-runs on a CPU laptop and free API tiers. Total model spend across the
-whole build, including every failed experiment: $0.
-
 ## Two answers that show the whole system
 
 A question the corpus can answer:
