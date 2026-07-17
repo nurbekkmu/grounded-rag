@@ -107,11 +107,18 @@ evidence chunks, with the verification method recorded in the file.
 | hybrid | no | **13%** | **80%** | **0.702** |
 | hybrid | yes | 20% | 80% | 0.689 |
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/retrieval-ablation-dark.svg">
+  <img src="docs/img/retrieval-ablation-light.svg" alt="Grouped bar chart: MRR for bm25, vector, and hybrid retrieval, with and without reranking" width="720">
+</picture>
+
 Two caveats the table itself shows: one failure is a deliberately
 unanswerable canary (evidence stranded in a PDF footnote), and reranking
 demotes one paraphrase question's evidence — a measured cross-encoder
 weakness, documented rather than hidden. Regenerate with
-`python eval/ablate.py`; `eval/ablation.md` holds all twelve rows.
+`python eval/ablate.py`; the charts redraw from the same
+`eval/ablation.json` with `python eval/make_charts.py`;
+`eval/ablation.md` holds all twelve rows.
 
 ### Contextual retrieval
 
@@ -123,6 +130,11 @@ Prepending an LLM-generated context to each chunk before indexing
 - Full-corpus hybrid: barely moves — fusion already rescues most of what
   contextualization rescues, and reranked rows are identical across
   indexes (the reranker rescores raw text, so shortlists converge)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/contextual-retrieval-dark.svg">
+  <img src="docs/img/contextual-retrieval-light.svg" alt="Paired bars: vector-arm failure-rate at 20, baseline index vs contextual index" width="720">
+</picture>
 
 **Lesson:** contextual retrieval helps a single retriever most; stacked
 defenses overlap. Worth knowing before paying to contextualize a corpus.
@@ -149,6 +161,11 @@ defenses overlap. Worth knowing before paying to contextualize a corpus.
 | generation (Gemini Flash) | 4.3 s | 6.3 s |
 | NLI claim verification | 7.8 s | 90 s |
 | end-to-end | ~20 s | ~104 s |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/latency-budget-dark.svg">
+  <img src="docs/img/latency-budget-light.svg" alt="Bar chart: P50 seconds per pipeline stage" width="720">
+</picture>
 
 The reranker is 81% of local latency; verification's tail scales with
 answer length × cited chunks. Known fixes: candidate caps, verification
@@ -230,7 +247,7 @@ fetched live at build time.
 | `src/embed.py`, `src/index.py` | local Nomic embeddings; Weaviate + BM25 index builds |
 | `src/retrieve.py`, `src/rerank.py` | hybrid retrieval + RRF; cross-encoder shortlist |
 | `src/generate.py`, `src/guardrails.py` | cited generation; evidence floor + NLI verification |
-| `eval/` | golden set, retrieval + generation metrics, ablation harness, latency recorder |
+| `eval/` | golden set, retrieval + generation metrics, ablation harness, latency recorder, chart generator |
 | `prompts/` | versioned prompt configs (a prompt change is a config change) |
 | `config.yaml` | runtime knobs; CLI > config > defaults |
 
@@ -253,6 +270,5 @@ hooks.
 
 Corpus: Chip Huyen's [*AI Engineering*](https://www.oreilly.com/library/view/ai-engineering/9781098166298/)
 (local copy only, never redistributed) and her [blog](https://huyenchip.com/blog/).
-Architecture blueprint: Aishwarya Srinivasan's "5 AI Engineer Projects
-to Build in 2026". Contextual retrieval:
+Contextual retrieval:
 [Anthropic's engineering post](https://www.anthropic.com/engineering/contextual-retrieval).
