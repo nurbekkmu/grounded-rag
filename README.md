@@ -125,9 +125,8 @@ shows: one failure is a deliberately unanswerable canary question (its
 evidence lives in a detached PDF footnote, see limitations), and
 reranking pushes one paraphrase question's evidence out of the top-20,
 which is the same cross-encoder weakness showing up in two different
-metrics. The table regenerates with `python eval/ablate.py`; the
-full-corpus contextual rows are being computed as I write this, and
-`eval/ablation.md` always holds the current version.
+metrics. The table regenerates with `python eval/ablate.py`;
+`eval/ablation.md` holds all twelve rows, baseline and contextual.
 
 ### Contextual retrieval vs. Anthropic's published numbers
 
@@ -138,6 +137,19 @@ vector arm's failure-rate@20 (17% → 8%)** and lifted BM25's recall@5 by
 contextual embeddings; I measure ~53% on a smaller, harder question
 set. Directionally consistent, and the single rescued question was
 exactly the ambiguous cross-chapter case the technique targets.
+
+On the full corpus the pattern repeats at the arm level — contextual
+embeddings cut the vector arm's failure rate from 20% to 13% and
+lifted both arms' MRR — but the fused hybrid barely moves, because
+fusion was already rescuing most of what contextualization rescues.
+Every reranked row is identical across the two indexes, which makes
+sense once you see it: the reranker rescores raw chunk text, so once
+either index gets the right candidates into the net, the shortlists
+converge. The practical lesson: contextual retrieval helps a single
+retriever most; stacked defenses overlap. Worth knowing before paying
+to contextualize a corpus. (One suspect for the smaller full-corpus
+effect: the blog half's contexts came from a terser model, averaging
+23 words against the book's 45.)
 
 I also tested a 12x-slower reranker (bge-reranker-base) against the
 MiniLM default: identical MRR, worse recall@5. MiniLM keeps its seat,
